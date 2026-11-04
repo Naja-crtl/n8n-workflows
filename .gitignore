@@ -1,0 +1,10 @@
+# Secrets
+.env
+*.env
+!.env.example
+*.key
+*.pem
+
+# Local files
+.DS_Store
+node_modules/
