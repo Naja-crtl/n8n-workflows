@@ -131,19 +131,8 @@
       ]
     },
     {
-      "parameters": {},
-      "id": "2c6abe98-05a0-49c2-9579-ae5257760d6a",
-      "name": "Spam: stored, no alert",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [
-        880,
-        100
-      ]
-    },
-    {
       "parameters": {
-        "content": "## Lead Capture\n1. Run `setup.sql` in Supabase once\n2. Select your **Postgres** credential in *Save lead*\n3. Select your **Telegram** credential and set your chat ID in *Telegram alert*\n4. Publish, then share the form's production URL",
+        "content": "## Lead Capture\n1. Run `setup.sql` in Supabase once\n2. Select your **Postgres** credential in *Save lead*\n3. Select your **Telegram** credential and set your chat ID in both Telegram nodes\n4. Publish, then share the form's production URL",
         "height": 220,
         "width": 340
       },
@@ -154,6 +143,25 @@
       "position": [
         -40,
         -300
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⚠️ <b>Possible spam #{{ $json.id }}</b>\n<i>Flagged: {{ $('Normalize & validate').item.json.reasons.join(', ') }}</i>\n\n<b>Name:</b> {{ $('Normalize & validate').item.json.safe.name }}\n<b>Email:</b> {{ $('Normalize & validate').item.json.safe.email }}\n<b>Phone:</b> {{ $('Normalize & validate').item.json.safe.phone }}\n<b>Company:</b> {{ $('Normalize & validate').item.json.safe.company }}\n\n<b>Message:</b>\n{{ $('Normalize & validate').item.json.safe.message }}\n\n<i>If this is a real lead, mark it with: update crm.leads set status = 'new' where id = {{ $json.id }};</i>",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_notification": true
+        }
+      },
+      "id": "b95dff37-f6a2-49ed-8f01-dcc7963b386d",
+      "name": "Telegram spam review",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        100
       ]
     }
   ],
@@ -202,7 +210,7 @@
         ],
         [
           {
-            "node": "Spam: stored, no alert",
+            "node": "Telegram spam review",
             "type": "main",
             "index": 0
           }
