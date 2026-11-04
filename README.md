@@ -6,7 +6,7 @@ Automation workflows built with [n8n](https://n8n.io), running on a self-hosted 
 
 | Workflow | What it does | Trigger |
 |---|---|---|
-| [Lead Capture](workflows/lead-capture/) | Contact form to a Supabase leads table, with spam filtering and instant Telegram alerts | n8n Form |
+| [Lead Capture](workflows/lead-capture/) | Contact form to a Supabase leads table, with spam filtering, instant Telegram alerts and a daily spam digest | n8n Form + daily schedule |
 
 ## Repository layout
 

@@ -1,5 +1,5 @@
 {
-  "name": "Lead Capture: Form to Supabase + Telegram Alert",
+  "name": "Lead Capture: Form to Supabase + Telegram Alert + Daily Spam Digest",
   "nodes": [
     {
       "parameters": {
@@ -132,8 +132,8 @@
     },
     {
       "parameters": {
-        "content": "## Lead Capture\n1. Run `setup.sql` in Supabase once\n2. Select your **Postgres** credential in *Save lead*\n3. Select your **Telegram** credential and set your chat ID in both Telegram nodes\n4. Publish, then share the form's production URL",
-        "height": 220,
+        "content": "## Lead Capture\n1. Run `setup.sql` in Supabase once\n2. Select your **Postgres** credential in *Save lead* and *Get last 24h spam*\n3. Select your **Telegram** credential and set your chat ID in *Telegram alert* and *Telegram spam digest*\n4. Publish, then share the form's production URL",
+        "height": 240,
         "width": 340
       },
       "id": "da5f4fc3-73ae-4e8b-84b1-e3da69628145",
@@ -146,22 +146,80 @@
       ]
     },
     {
+      "parameters": {},
+      "id": "507e2d22-20a0-4674-ad3b-a741fe9c47a7",
+      "name": "Spam: stored for daily digest",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        880,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "6441b8e1-02ff-4a56-aa30-e6723b0a7ac0",
+      "name": "Every day at 9:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, created_at, name, email, message\nFROM crm.leads\nWHERE status = 'spam'\n  AND created_at >= now() - interval '24 hours'\nORDER BY created_at;",
+        "options": {}
+      },
+      "id": "05a5a8b4-e07b-42b0-8a4b-00c5d4bca803",
+      "name": "Get last 24h spam",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        220,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build one Telegram message from all flagged entries.\nconst esc = (s) => String(s ?? '')\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst rows = $input.all().map((i) => i.json).filter((r) => r.id != null);\nif (rows.length === 0) return []; // no spam today, send nothing\n\nconst lines = rows.map((r) => {\n  const msg = String(r.message ?? '');\n  const short = msg.length > 120 ? msg.slice(0, 120) + '...' : msg;\n  return `<b>#${r.id}</b> ${esc(r.name)} (${esc(r.email)})\\n${esc(short)}`;\n});\n\nlet text = `🗂 <b>Spam review: ${rows.length} flagged in the last 24h</b>\\n\\n` + lines.join('\\n\\n');\ntext += `\\n\\n<i>Restore a real lead: update crm.leads set status = 'new' where id = &lt;id&gt;;</i>`;\nif (text.length > 4000) text = text.slice(0, 3990) + '\\n...';\n\nreturn [{ json: { text, count: rows.length } }];"
+      },
+      "id": "83f1fdc7-1adc-40c4-8135-4021a539a1aa",
+      "name": "Build digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        320
+      ]
+    },
+    {
       "parameters": {
         "chatId": "YOUR_TELEGRAM_CHAT_ID",
-        "text": "=⚠️ <b>Possible spam #{{ $json.id }}</b>\n<i>Flagged: {{ $('Normalize & validate').item.json.reasons.join(', ') }}</i>\n\n<b>Name:</b> {{ $('Normalize & validate').item.json.safe.name }}\n<b>Email:</b> {{ $('Normalize & validate').item.json.safe.email }}\n<b>Phone:</b> {{ $('Normalize & validate').item.json.safe.phone }}\n<b>Company:</b> {{ $('Normalize & validate').item.json.safe.company }}\n\n<b>Message:</b>\n{{ $('Normalize & validate').item.json.safe.message }}\n\n<i>If this is a real lead, mark it with: update crm.leads set status = 'new' where id = {{ $json.id }};</i>",
+        "text": "={{ $json.text }}",
         "additionalFields": {
           "appendAttribution": false,
           "parse_mode": "HTML",
           "disable_notification": true
         }
       },
-      "id": "b95dff37-f6a2-49ed-8f01-dcc7963b386d",
-      "name": "Telegram spam review",
+      "id": "a6a80aaf-0f71-4366-a458-5768ef4a2a2a",
+      "name": "Telegram spam digest",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        880,
-        100
+        660,
+        320
       ]
     }
   ],
@@ -210,7 +268,40 @@
         ],
         [
           {
-            "node": "Telegram spam review",
+            "node": "Spam: stored for daily digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every day at 9:00": {
+      "main": [
+        [
+          {
+            "node": "Get last 24h spam",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get last 24h spam": {
+      "main": [
+        [
+          {
+            "node": "Build digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build digest": {
+      "main": [
+        [
+          {
+            "node": "Telegram spam digest",
             "type": "main",
             "index": 0
           }
