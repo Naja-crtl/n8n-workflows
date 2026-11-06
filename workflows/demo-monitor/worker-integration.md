@@ -37,7 +37,7 @@ X-Webhook-Secret: <shared secret>
 | `demos[].ok` | yes | `true` only if the demo actually passed (not "the job finished"). |
 | `demos[].wake_ms` | no | Time until `/health` answered. |
 | `demos[].page_ms` | no | Time to load the main page. |
-| `demos[].status_code` | no | Last HTTP status seen. |
+| `demos[].status_code` | no | HTTP status of the step that failed, or `null` on a network-level failure. On success, the main page's status. |
 | `demos[].problem` | no | Short human-readable reason, max 500 chars. |
 | `demos[].details` | no | Any extra JSON (IDs, headers). Stored as `jsonb`, max 4 KB. |
 
