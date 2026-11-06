@@ -1,0 +1,329 @@
+{
+  "name": "Demo Monitor: Cloudflare Worker results to Supabase + Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "demo-checks",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "3298e06c-9c22-4fe1-b8a7-1e6dd1977836",
+      "name": "Worker results",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "165eb74c-91c0-4597-abd8-2c0d68fea515"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate the Worker's payload and output one item per demo.\nconst body = $json.body ?? {};\nconst errors = [];\n\nconst ranAt = new Date(body.ran_at);\nif (!body.ran_at || isNaN(ranAt)) errors.push('ran_at missing or not a valid ISO date');\nif (!Array.isArray(body.demos) || body.demos.length === 0) errors.push('demos must be a non-empty array');\nif (Array.isArray(body.demos) && body.demos.length > 50) errors.push('too many demos (max 50)');\nif (errors.length) throw new Error('Invalid payload: ' + errors.join('; '));\n\nconst int = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Math.round(Number(v)) : null);\nconst text = (v, max) => (v === null || v === undefined || v === '' ? null : String(v).slice(0, max));\n\nreturn body.demos.map((d, i) => {\n  const name = String(d?.name ?? '').trim();\n  if (!/^[\\w .-]{1,60}$/.test(name)) throw new Error(`Invalid demo name at index ${i}`);\n  if (typeof d.ok !== 'boolean') throw new Error(`\"ok\" must be true or false for ${name}`);\n  return {\n    json: {\n      run_at: ranAt.toISOString(),\n      demo: name,\n      ok: d.ok,\n      wake_ms: int(d.wake_ms),\n      page_ms: int(d.page_ms),\n      status_code: int(d.status_code),\n      problem: text(d.problem, 500),\n      details: d.details && typeof d.details === 'object' ? JSON.stringify(d.details).slice(0, 4000) : null,\n      source: text(body.source, 60) ?? 'cloudflare-worker',\n    },\n  };\n});"
+      },
+      "id": "be0d4ff1-d908-4e0f-8d4d-dc1aa16057b6",
+      "name": "Validate & flatten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"received\": $input.all().length } }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "8ce630cd-297e-4400-846a-f54bb87676ee",
+      "name": "Acknowledge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops.demo_checks (run_at, demo, ok, wake_ms, page_ms, status_code, problem, details, source)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)\nON CONFLICT (run_at, demo) DO NOTHING;",
+        "options": {
+          "queryReplacement": "={{ [$json.run_at, $json.demo, $json.ok, $json.wake_ms, $json.page_ms, $json.status_code, $json.problem, $json.details, $json.source] }}"
+        }
+      },
+      "id": "64d7abe9-ad29-4b2c-a37e-83eacd649b84",
+      "name": "Store results",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        660,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT demo,\n       round(100.0 * count(*) FILTER (WHERE ok) / count(*), 0) AS uptime_pct,\n       round(avg(wake_ms) FILTER (WHERE ok) / 1000.0, 1) AS avg_wake_s\nFROM ops.demo_checks\nWHERE run_at >= now() - interval '7 days'\nGROUP BY demo;",
+        "options": {}
+      },
+      "id": "3a862b6a-ded9-4f5a-8994-837f245e32b0",
+      "name": "Get 7-day stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        880,
+        0
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the Telegram report from this run plus 7-day stats.\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst run = $('Validate & flatten').all().map((i) => i.json);\nconst stats = Object.fromEntries(\n  $input.all().filter((i) => i.json.demo).map((i) => [i.json.demo, i.json])\n);\n\nconst down = run.filter((d) => !d.ok);\nconst when = DateTime.fromISO(run[0].run_at).setZone('Asia/Dubai').toFormat('dd LLL, HH:mm');\n\nconst lines = run\n  .sort((a, b) => a.demo.localeCompare(b.demo))\n  .map((d) => {\n    const s = stats[d.demo];\n    const week = s ? ` · 7d ${s.uptime_pct}%` : '';\n    if (d.ok) {\n      const wake = d.wake_ms != null ? `woke in ${(d.wake_ms / 1000).toFixed(1)}s` : 'up';\n      return `✅ <b>${esc(d.demo)}</b>: ${wake}${week}`;\n    }\n    const why = d.problem ? `\\n     ${esc(d.problem)}` : '';\n    return `❌ <b>${esc(d.demo)}</b>: DOWN${week}${why}`;\n  });\n\nconst header = down.length\n  ? `🚨 <b>Demo check: ${down.length} of ${run.length} down</b>`\n  : `🟢 <b>Demo check: all ${run.length} up</b>`;\n\nreturn [{\n  json: {\n    text: `${header}\\n<i>${when} (Dubai)</i>\\n\\n${lines.join('\\n')}`,\n    silent: down.length === 0,\n  },\n}];"
+      },
+      "id": "c0ef1313-f484-49f8-86df-2818e92b1225",
+      "name": "Build report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_notification": "={{ $json.silent }}"
+        }
+      },
+      "id": "167d003b-806d-4fc1-8474-f4541e41cbd9",
+      "name": "Telegram report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "id": "df0ec58b-c635-47e8-b1f6-d03c87eedf1e",
+      "name": "Daily 08:30 missed-run check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT count(*)::int AS received\nFROM ops.demo_checks\nWHERE run_at >= now() - interval '3 hours';",
+        "options": {}
+      },
+      "id": "d502bb53-f32b-482a-865b-6ea5ac3595fc",
+      "name": "Count today's results",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        220,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "db4ded7f-c937-4efe-a964-7a879a99cb59",
+              "leftValue": "={{ $json.received }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1f7b172f-c680-4358-b06f-e914d66b637e",
+      "name": "Nothing received?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⚠️ <b>No demo check received today</b>\n\nThe Cloudflare Worker didn't report by 08:30 (Dubai). Check the Worker's cron logs, the webhook secret, and whether this workflow is published.",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "f0693de1-1c37-48e9-aad5-79a61cd681d0",
+      "name": "Telegram missed-run alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Demo Monitor\n1. Run `setup.sql` in Supabase once\n2. *Worker results*: create a **Header Auth** credential (name `X-Webhook-Secret`)\n3. Select **Postgres** in the three Postgres nodes\n4. Select the **monitoring bot's Telegram** credential and set your chat ID in both Telegram nodes\n5. Publish, then give the production webhook URL to the Worker",
+        "height": 260,
+        "width": 380
+      },
+      "id": "77fd8c01-6270-4262-8168-a9e76741a0f5",
+      "name": "Setup note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -320
+      ]
+    }
+  ],
+  "connections": {
+    "Worker results": {
+      "main": [
+        [
+          {
+            "node": "Validate & flatten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & flatten": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge": {
+      "main": [
+        [
+          {
+            "node": "Store results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store results": {
+      "main": [
+        [
+          {
+            "node": "Get 7-day stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get 7-day stats": {
+      "main": [
+        [
+          {
+            "node": "Build report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build report": {
+      "main": [
+        [
+          {
+            "node": "Telegram report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count today's results": {
+      "main": [
+        [
+          {
+            "node": "Nothing received?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nothing received?": {
+      "main": [
+        [
+          {
+            "node": "Telegram missed-run alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Daily 08:30 missed-run check": {
+      "main": [
+        [
+          {
+            "node": "Count today's results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Dubai"
+  },
+  "pinData": {},
+  "tags": []
+}
