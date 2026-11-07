@@ -70,11 +70,13 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT demo,\n       round(100.0 * count(*) FILTER (WHERE ok) / count(*), 0) AS uptime_pct,\n       round(avg(wake_ms) FILTER (WHERE ok) / 1000.0, 1) AS avg_wake_s\nFROM ops.demo_checks\nWHERE run_at >= now() - interval '7 days'\nGROUP BY demo;",
-        "options": {}
+        "query": "WITH hist AS (\n  SELECT demo, ok, wake_ms, run_at\n  FROM ops.demo_checks\n  WHERE run_at >= now() - interval '14 days'\n),\nlast_ok AS (\n  SELECT demo, max(run_at) AS at FROM ops.demo_checks WHERE ok GROUP BY demo\n),\nstreak AS (\n  SELECT d.demo, count(*)::int AS fail_streak\n  FROM ops.demo_checks d\n  LEFT JOIN last_ok l ON l.demo = d.demo\n  WHERE NOT d.ok AND d.run_at > coalesce(l.at, '-infinity'::timestamptz)\n  GROUP BY d.demo\n)\nSELECT h.demo,\n       round(100.0 * count(*) FILTER (WHERE h.ok AND h.run_at >= now() - interval '7 days')\n             / nullif(count(*) FILTER (WHERE h.run_at >= now() - interval '7 days'), 0), 0) AS uptime_pct,\n       round(avg(h.wake_ms) FILTER (WHERE h.ok AND h.run_at < $1::timestamptz))::int AS usual_wake_ms,\n       count(*) FILTER (WHERE h.ok AND h.run_at < $1::timestamptz)::int AS baseline_runs,\n       coalesce(max(s.fail_streak), 0) AS fail_streak\nFROM hist h\nLEFT JOIN streak s ON s.demo = h.demo\nGROUP BY h.demo;",
+        "options": {
+          "queryReplacement": "={{ [$('Validate & flatten').first().json.run_at] }}"
+        }
       },
       "id": "3a862b6a-ded9-4f5a-8994-837f245e32b0",
-      "name": "Get 7-day stats",
+      "name": "Get stats & baselines",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
@@ -86,7 +88,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build the Telegram report from this run plus 7-day stats.\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst run = $('Validate & flatten').all().map((i) => i.json);\nconst stats = Object.fromEntries(\n  $input.all().filter((i) => i.json.demo).map((i) => [i.json.demo, i.json])\n);\n\nconst down = run.filter((d) => !d.ok);\nconst when = DateTime.fromISO(run[0].run_at).setZone('Asia/Dubai').toFormat('dd LLL, HH:mm');\n\nconst lines = run\n  .sort((a, b) => a.demo.localeCompare(b.demo))\n  .map((d) => {\n    const s = stats[d.demo];\n    const week = s ? ` · 7d ${s.uptime_pct}%` : '';\n    if (d.ok) {\n      const wake = d.wake_ms != null ? `woke in ${(d.wake_ms / 1000).toFixed(1)}s` : 'up';\n      return `✅ <b>${esc(d.demo)}</b>: ${wake}${week}`;\n    }\n    const why = d.problem ? `\\n     ${esc(d.problem)}` : '';\n    return `❌ <b>${esc(d.demo)}</b>: DOWN${week}${why}`;\n  });\n\nconst header = down.length\n  ? `🚨 <b>Demo check: ${down.length} of ${run.length} down</b>`\n  : `🟢 <b>Demo check: all ${run.length} up</b>`;\n\nreturn [{\n  json: {\n    text: `${header}\\n<i>${when} (Dubai)</i>\\n\\n${lines.join('\\n')}`,\n    silent: down.length === 0,\n  },\n}];"
+        "jsCode": "// Build the Telegram report: this run, 7-day uptime, slow wake-ups and failure streaks.\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst secs = (ms) => (ms / 1000).toFixed(1) + 's';\n\n// Slow-wake rule: needs at least 3 earlier successful runs as a baseline.\nconst MIN_BASELINE_RUNS = 3;\nconst SLOW_FACTOR = 1.5;        // 50% slower than usual...\nconst SLOW_MIN_EXTRA_MS = 20000; // ...and at least 20s slower (polls are 20s apart)\nconst SLOW_ABSOLUTE_MS = 120000; // anything over 2 minutes is always slow\n\nconst run = $('Validate & flatten').all().map((i) => i.json);\nconst stats = Object.fromEntries(\n  $input.all().filter((i) => i.json.demo).map((i) => [i.json.demo, i.json])\n);\n\nlet down = 0, slow = 0;\nconst lines = run\n  .sort((a, b) => a.demo.localeCompare(b.demo))\n  .map((d) => {\n    const s = stats[d.demo] ?? {};\n    const week = s.uptime_pct != null ? ` · 7d ${s.uptime_pct}%` : '';\n\n    if (!d.ok) {\n      down++;\n      const streak = Number(s.fail_streak) >= 2 ? ` (${s.fail_streak} runs in a row)` : '';\n      const why = d.problem ? `\\n     ${esc(d.problem)}` : '';\n      return `❌ <b>${esc(d.demo)}</b>: DOWN${streak}${week}${why}`;\n    }\n\n    if (d.wake_ms == null) return `✅ <b>${esc(d.demo)}</b>: up${week}`;\n\n    const usual = Number(s.usual_wake_ms);\n    const hasBaseline = Number(s.baseline_runs) >= MIN_BASELINE_RUNS && usual > 0;\n    const isSlow =\n      d.wake_ms > SLOW_ABSOLUTE_MS ||\n      (hasBaseline && d.wake_ms > usual * SLOW_FACTOR && d.wake_ms - usual >= SLOW_MIN_EXTRA_MS);\n\n    if (isSlow) {\n      slow++;\n      const vs = hasBaseline ? ` (usually ${secs(usual)})` : '';\n      return `🐢 <b>${esc(d.demo)}</b>: slow, woke in ${secs(d.wake_ms)}${vs}${week}`;\n    }\n    return `✅ <b>${esc(d.demo)}</b>: woke in ${secs(d.wake_ms)}${week}`;\n  });\n\nconst when = DateTime.fromISO(run[0].run_at).setZone('Asia/Dubai').toFormat('dd LLL, HH:mm');\nlet header;\nif (down) header = `🚨 <b>Demo check: ${down} of ${run.length} down</b>`;\nelse if (slow) header = `🟡 <b>Demo check: all ${run.length} up, ${slow} slow</b>`;\nelse header = `🟢 <b>Demo check: all ${run.length} up</b>`;\n\nreturn [{\n  json: {\n    text: `${header}\\n<i>${when} (Dubai)</i>\\n\\n${lines.join('\\n')}`,\n    silent: down === 0, // only failures ring; slow wake-ups arrive silently\n    down, slow,\n  },\n}];"
       },
       "id": "c0ef1313-f484-49f8-86df-2818e92b1225",
       "name": "Build report",
@@ -204,8 +206,8 @@
     },
     {
       "parameters": {
-        "content": "## Demo Monitor\n1. Run `setup.sql` in Supabase once\n2. *Worker results*: create a **Header Auth** credential (name `X-Webhook-Secret`)\n3. Select **Postgres** in the three Postgres nodes\n4. Select the **monitoring bot's Telegram** credential and set your chat ID in both Telegram nodes\n5. Publish, then give the production webhook URL to the Worker",
-        "height": 260,
+        "content": "## Demo Monitor v1.1\n1. Run `setup.sql` in Supabase once\n2. *Worker results*: **Header Auth** credential (name `X-Webhook-Secret`)\n3. Select **Postgres** in the four Postgres nodes\n4. Select the **monitoring bot** and set your chat ID in all three Telegram nodes\n5. Settings > Error workflow: **Error Alerts**\n6. Publish, then give the production webhook URL to the Worker",
+        "height": 280,
         "width": 380
       },
       "id": "77fd8c01-6270-4262-8168-a9e76741a0f5",
@@ -215,6 +217,79 @@
       "position": [
         -60,
         -320
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 8,
+              "triggerAtMinute": 45
+            }
+          ]
+        }
+      },
+      "id": "97e4d683-fd6a-4bbb-bb38-8329655b25b1",
+      "name": "Monday 08:45 weekly summary",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT demo,\n  count(*) FILTER (WHERE run_at >= now() - interval '7 days')::int AS checks,\n  count(*) FILTER (WHERE ok AND run_at >= now() - interval '7 days')::int AS passed,\n  round(avg(wake_ms) FILTER (WHERE ok AND run_at >= now() - interval '7 days') / 1000.0, 1) AS avg_wake_s,\n  round(max(wake_ms) FILTER (WHERE ok AND run_at >= now() - interval '7 days') / 1000.0, 1) AS max_wake_s,\n  count(*) FILTER (WHERE run_at < now() - interval '7 days')::int AS prev_checks,\n  count(*) FILTER (WHERE ok AND run_at < now() - interval '7 days')::int AS prev_passed,\n  round(avg(wake_ms) FILTER (WHERE ok AND run_at < now() - interval '7 days') / 1000.0, 1) AS prev_avg_wake_s\nFROM ops.demo_checks\nWHERE run_at >= now() - interval '14 days'\nGROUP BY demo\nORDER BY demo;",
+        "options": {}
+      },
+      "id": "7c57d534-6f8a-4ecc-97fb-8ca661e48620",
+      "name": "Get weekly stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        220,
+        640
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Weekly summary: last 7 days per demo, compared with the 7 days before.\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst rows = $input.all().map((i) => i.json).filter((r) => r.demo);\n\nconst end = $now.setZone('Asia/Dubai');\nconst range = `${end.minus({ days: 6 }).toFormat('dd LLL')} to ${end.toFormat('dd LLL')}`;\n\nif (rows.length === 0) {\n  return [{ json: { text: `📅 <b>Weekly demo summary</b>\\n<i>${range}</i>\\n\\nNo demo checks were recorded in the last 7 days.` } }];\n}\n\nconst pct = (ok, n) => (n > 0 ? Math.round((100 * ok) / n) : null);\nlet totalChecks = 0, totalPassed = 0;\n\nconst lines = rows.map((r) => {\n  const checks = Number(r.checks), passed = Number(r.passed);\n  totalChecks += checks; totalPassed += passed;\n  const up = pct(passed, checks);\n  const prevUp = pct(Number(r.prev_passed), Number(r.prev_checks));\n\n  const icon = checks === 0 ? '⚪' : up === 100 ? '✅' : up >= 80 ? '🟡' : '❌';\n  let line = `${icon} <b>${esc(r.demo)}</b>: ${up ?? '-'}% up (${passed}/${checks})`;\n  if (prevUp != null && up != null && prevUp !== up) line += `, was ${prevUp}%`;\n\n  if (r.avg_wake_s != null) {\n    line += `\\n     wake avg ${r.avg_wake_s}s, slowest ${r.max_wake_s}s`;\n    if (r.prev_avg_wake_s != null) {\n      const diff = Number(r.avg_wake_s) - Number(r.prev_avg_wake_s);\n      if (Math.abs(diff) >= 5) line += ` (${diff > 0 ? '+' : ''}${diff.toFixed(1)}s vs last week)`;\n    }\n  }\n  return line;\n});\n\nconst overall = pct(totalPassed, totalChecks);\nconst header = `📅 <b>Weekly demo summary</b>\\n<i>${range}</i>\\n\\nOverall: <b>${overall ?? '-'}%</b> (${totalPassed}/${totalChecks} checks passed)`;\n\nreturn [{ json: { text: `${header}\\n\\n${lines.join('\\n')}` } }];"
+      },
+      "id": "2ec574c9-e0e6-4d9a-a5fd-1d0f1b3b1fa8",
+      "name": "Build weekly summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_notification": true
+        }
+      },
+      "id": "2cf4dcd9-b14a-4007-a549-cc347aa2fe3c",
+      "name": "Telegram weekly summary",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        640
       ]
     }
   ],
@@ -256,18 +331,7 @@
       "main": [
         [
           {
-            "node": "Get 7-day stats",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get 7-day stats": {
-      "main": [
-        [
-          {
-            "node": "Build report",
+            "node": "Get stats & baselines",
             "type": "main",
             "index": 0
           }
@@ -313,6 +377,50 @@
         [
           {
             "node": "Count today's results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get stats & baselines": {
+      "main": [
+        [
+          {
+            "node": "Build report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monday 08:45 weekly summary": {
+      "main": [
+        [
+          {
+            "node": "Get weekly stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get weekly stats": {
+      "main": [
+        [
+          {
+            "node": "Build weekly summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build weekly summary": {
+      "main": [
+        [
+          {
+            "node": "Telegram weekly summary",
             "type": "main",
             "index": 0
           }

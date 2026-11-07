@@ -1,0 +1,93 @@
+{
+  "name": "Error Alerts: any workflow failure to Telegram",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "dacba3ec-5e84-40a2-b2f1-b3d92ac15382",
+      "name": "On workflow error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turn n8n's error data into a short Telegram alert.\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst e = $json;\n\n// Two shapes: a failed execution, or a trigger that failed before any execution started.\nconst workflow = e.workflow?.name ?? 'Unknown workflow';\nconst exec = e.execution ?? {};\nconst trigger = e.trigger ?? {};\n\nconst node = exec.lastNodeExecuted ?? trigger.error?.node?.name ?? 'unknown step';\nconst raw = exec.error?.message ?? trigger.error?.message ?? 'No error message';\nconst message = raw.length > 600 ? raw.slice(0, 600) + '...' : raw;\nconst mode = exec.mode ?? trigger.mode ?? '';\nconst when = $now.setZone('Asia/Dubai').toFormat('dd LLL, HH:mm');\n\nlet text = `🛠 <b>Workflow failed: ${esc(workflow)}</b>\\n<i>${when} (Dubai)${mode ? ' · ' + esc(mode) : ''}</i>\\n\\n`;\ntext += `<b>Step:</b> ${esc(node)}\\n<b>Error:</b> ${esc(message)}`;\nif (exec.url) text += `\\n\\n<a href=\"${esc(exec.url)}\">Open the execution</a>`;\n\nreturn [{ json: { text } }];"
+      },
+      "id": "84621ff9-3254-4120-9976-5fb2dd25b0aa",
+      "name": "Format alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "3cb54a5e-34ec-4205-8592-7c982163d8e9",
+      "name": "Telegram error alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Error Alerts\n1. Select the **monitoring bot** credential and set your chat ID\n2. Save (no need to publish: error workflows run automatically)\n3. In each workflow: **Settings > Error workflow > Error Alerts**",
+        "height": 200,
+        "width": 360
+      },
+      "id": "47028330-bd1c-49a5-aaab-338401d6a678",
+      "name": "Setup note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -260
+      ]
+    }
+  ],
+  "connections": {
+    "On workflow error": {
+      "main": [
+        [
+          {
+            "node": "Format alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format alert": {
+      "main": [
+        [
+          {
+            "node": "Telegram error alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Dubai"
+  },
+  "pinData": {},
+  "tags": []
+}
