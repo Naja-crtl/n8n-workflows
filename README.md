@@ -108,6 +108,26 @@ infra/              hosting config for the n8n instance
 
 The instance runs n8n in Docker on an Oracle Cloud Always Free Arm VM, with Caddy for automatic HTTPS and a Supabase Postgres database for workflows and credentials. Config is in [`infra/`](infra/).
 
+## Roadmap
+
+Planned improvements. Done items are ticked, then moved into the sections above.
+
+**Repository**
+
+- [ ] One settings node per workflow (timezone, Telegram chat ID, thresholds) instead of values written into each node
+- [ ] Screenshots of each workflow canvas and example Telegram messages
+- [ ] Contact link to [nb-systems.naja.live](https://nb-systems.naja.live)
+
+**Lead Capture**
+
+- [ ] Auto-reply email to the visitor
+- [ ] Duplicate check: look up the email before saving a new lead
+- [ ] Genuine leads included in the morning digest as a daily summary
+
+**Monitoring**
+
+- [ ] External watchdog for the n8n server itself, so an outage that stops Error Alerts is still reported
+
 ## Author
 
 Naja Boughader · [GitHub](https://github.com/Naja-crtl) · [LinkedIn](https://www.linkedin.com/in/naja-bou-ghader-1a2822249)
