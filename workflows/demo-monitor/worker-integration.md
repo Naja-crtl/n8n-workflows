@@ -21,9 +21,9 @@ X-Webhook-Secret: <shared secret>
   "ran_at": "2026-11-07T04:00:03Z",
   "source": "my-checker-worker",
   "demos": [
-    { "name": "DemoApp", "ok": true, "wake_ms": 41200, "page_ms": 820, "status_code": 200, "problem": null },
-    { "name": "OtherDemo", "ok": false, "wake_ms": null, "page_ms": null, "status_code": 502,
-      "problem": "Health check timed out after 180s",
+    { "name": "DemoApp", "ok": true, "wake_ms": null, "was_asleep": true, "page_ms": 820, "status_code": 200, "problem": null },
+    { "name": "OtherDemo", "ok": false, "wake_ms": null, "was_asleep": false, "page_ms": null, "status_code": 429,
+      "problem": "Render refused to wake it (rate limited)",
       "details": { "rndr_id": "...", "cf_ray": "..." } }
   ]
 }
@@ -35,10 +35,11 @@ X-Webhook-Secret: <shared secret>
 | `source` | no | Short label for the sender, max 60 chars. |
 | `demos[].name` | yes | Letters, numbers, spaces, `.`, `_`, `-`; max 60 chars. |
 | `demos[].ok` | yes | `true` only if the demo actually passed (not "the job finished"). |
-| `demos[].wake_ms` | no | Time until `/health` answered. |
+| `demos[].wake_ms` | no | Time until `/health` answered. Send `null` if the checker doesn't poll (the current Worker doesn't). |
+| `demos[].was_asleep` | no | `true` if the checker had to wake the demo and wait, `false` if it was already awake. |
 | `demos[].page_ms` | no | Time to load the main page. |
 | `demos[].status_code` | no | HTTP status of the step that failed, or `null` on a network-level failure. On success, the main page's status. |
-| `demos[].problem` | no | Short human-readable reason, max 500 chars. |
+| `demos[].problem` | no | Short human-readable reason, max 500 chars. Start it with `Render refused to wake` when Render answers `hibernate-rate-limited` or a challenge, so the report shows it as a refusal. |
 | `demos[].details` | no | Any extra JSON (IDs, headers). Stored as `jsonb`, max 4 KB. |
 
 ## Schedule

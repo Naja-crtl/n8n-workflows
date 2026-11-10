@@ -12,6 +12,7 @@ create table if not exists ops.demo_checks (
   page_ms      integer,
   status_code  integer,
   problem      text,
+  was_asleep   boolean,      -- v1.2: true if the Worker had to wake the demo, false if already awake
   details      jsonb,
   source       text not null default 'cloudflare-worker',
   received_at  timestamptz not null default now(),
@@ -20,6 +21,9 @@ create table if not exists ops.demo_checks (
 
 create index if not exists demo_checks_demo_run_idx on ops.demo_checks (demo, run_at desc);
 create index if not exists demo_checks_run_idx on ops.demo_checks (run_at desc);
+
+-- Upgrading an existing v1.0/v1.1 install? This line adds the v1.2 column (safe to run more than once).
+alter table ops.demo_checks add column if not exists was_asleep boolean;
 
 -- Data API is off for this project, but keep RLS on as a second layer.
 alter table ops.demo_checks enable row level security;

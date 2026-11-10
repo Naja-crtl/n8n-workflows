@@ -1,10 +1,10 @@
 # Demo Monitor: Cloudflare Worker results to Supabase + Telegram
 
-Collects the daily results of a Cloudflare Worker that checks demo apps hosted on Render's free tier, keeps a full history in Postgres (Supabase), and sends a Telegram report after every run. It flags slow wake-ups and repeated failures, sends a weekly summary, and alerts you if the Worker didn't report at all.
+Collects the daily results of a Cloudflare Worker that checks demo apps hosted on Render's free tier, keeps a full history in Postgres (Supabase), and sends a Telegram report after every run. It shows which demos were already awake or had to be woken, flags slow pages, Render wake-up refusals and repeated failures, sends a weekly summary, and alerts you if the Worker didn't report at all.
 
 n8n never pings the demos itself. Free Render services sleep after inactivity and share a monthly hours budget, so the Worker's single daily wake-up stays the only check.
 
-**Version:** v1.1 (smart alerts + weekly summary)
+**Version:** v1.2 (awake/woken status, slow-page warning, Render refusals)
 
 ## How it works
 
@@ -14,12 +14,14 @@ n8n never pings the demos itself. Free Render services sleep after inactivity an
 2. **Validate & flatten** (Code): checks the payload and turns it into one item per demo. Bad payloads are rejected.
 3. **Acknowledge**: replies `202` to the Worker right away.
 4. **Store results** (Postgres): one row per demo in `ops.demo_checks`. A retried delivery of the same run is ignored.
-5. **Get stats & baselines** (Postgres): for each demo, the 7-day uptime, its usual wake-up time from earlier runs (last 14 days), and how many runs in a row it has failed.
+5. **Get stats & baselines** (Postgres): for each demo, the 7-day uptime, its usual start-page load time from earlier runs (last 14 days), and how many runs in a row it has failed.
 6. **Build report** (Code) and **Telegram report**: one message per run.
-   - ✅ up, with wake-up time
-   - 🐢 **slow**: woke at least 50% and 20 seconds slower than usual (needs 3 earlier runs as a baseline), or took over 2 minutes
-   - ❌ **down**, with the reason and the failure streak once it reaches 2 runs in a row
-   - Silent unless a demo is down. Slow wake-ups arrive silently.
+   - ✅ up: **already awake** or **woke up**, with the start page load time
+   - 🐢 **slow page**: at least twice as slow and 2 seconds slower than usual (needs 3 earlier runs as a baseline), or over 10 seconds
+   - ⛔ **Render refused to wake it**: Render's free-tier wake-up limit, not a broken app (visitors still can't open it)
+   - ❌ **down**: any other failure, with a shortened reason (full details stay in `ops.demo_checks`)
+   - Failure streaks are shown once a demo has failed 2 runs in a row
+   - Silent unless a demo is down or refused. Slow pages arrive silently.
 
 **Missed-run check** (second trigger)
 
@@ -31,37 +33,41 @@ n8n never pings the demos itself. Free Render services sleep after inactivity an
 
 1. **Monday 08:45 weekly summary** (Asia/Dubai, after that morning's check).
 2. **Get weekly stats**: per demo, the last 7 days compared with the 7 days before.
-3. **Telegram weekly summary**: overall uptime, each demo's uptime, average and slowest wake-up, and notable changes from last week. Sent silently.
+3. **Telegram weekly summary**: overall uptime, each demo's uptime, how often it was woken or refused by Render, average and slowest page load, and notable changes from last week. Sent silently.
 
 Example daily report:
 
 ```
-🚨 Demo check: 1 of 4 down
-07 Nov, 08:00 (Dubai)
+🚨 Demo check: 2 of 4 down
+09 Nov, 08:00 (Dubai)
 
-✅ AutoServicePro: woke in 36.0s · 7d 100%
-🐢 FuelStationPro: slow, woke in 98.0s (usually 42.0s) · 7d 100%
-❌ MarginTracker: DOWN (3 runs in a row) · 7d 57%
-     did not wake up before this run's request limit
-✅ StockPOS: woke in 41.0s · 7d 100%
+✅ AutoServicePro: already awake, page 0.8s · 7d 100%
+🐢 FuelStationPro: woke up, slow page 7.4s (usually 0.9s) · 7d 100%
+❌ MarginTracker: DOWN · 7d 86%
+     did not wake up within 5 minutes (health check answered 502, ...)
+⛔ StockPOS: Render refused to wake it (2 runs in a row) · 7d 71%
+
+⛔ = Render's wake-up limit. The app isn't broken, but visitors can't open it
+until Render allows it to start again. Full details are in ops.demo_checks.
 ```
 
 Example weekly summary:
 
 ```
 📅 Weekly demo summary
-01 Nov to 07 Nov
+03 Nov to 09 Nov
 
 Overall: 89% (25/28 checks passed)
+⛔ 2 failed checks were Render refusing to wake a demo
 
 ✅ AutoServicePro: 100% up (7/7)
-     wake avg 36.0s, slowest 37.0s
+     page avg 0.8s, slowest 0.9s
 ✅ FuelStationPro: 100% up (7/7)
-     wake avg 50.0s, slowest 98.0s (+8.0s vs last week)
-❌ MarginTracker: 57% up (4/7), was 100%
-     wake avg 35.0s, slowest 35.0s
-✅ StockPOS: 100% up (7/7), was 86%
-     wake avg 36.7s, slowest 41.0s
+     woken 1× · page avg 1.8s, slowest 7.4s
+🟡 MarginTracker: 86% up (6/7), was 100%
+     woken 1× · page avg 1.0s, slowest 1.0s
+❌ StockPOS: 71% up (5/7), was 100%
+     2× refused by Render · page avg 0.7s, slowest 0.7s
 ```
 
 ## Credentials needed
@@ -74,7 +80,7 @@ Overall: 89% (25/28 checks passed)
 
 ## Setup
 
-1. Run [`setup.sql`](setup.sql) in the Supabase **SQL Editor**. It creates `ops.demo_checks` and the `ops.demo_uptime_30d` view.
+1. Run [`setup.sql`](setup.sql) in the Supabase **SQL Editor**. It creates `ops.demo_checks` and the `ops.demo_uptime_30d` view. Upgrading from v1.0 or v1.1, run just this line: `alter table ops.demo_checks add column if not exists was_asleep boolean;`
 2. Generate the shared secret: `openssl rand -hex 32`. Save it in your password manager.
 3. Import `workflow.json` into n8n.
 4. In **Worker results**, create a **Header Auth** credential: Name `X-Webhook-Secret`, Value: the secret.
@@ -89,7 +95,7 @@ Overall: 89% (25/28 checks passed)
 | Setting | Where | Default |
 |---|---|---|
 | Webhook path | Worker results node | `demo-checks` |
-| Slow wake-up rule | Build report code (constants at the top) | 50% and 20s slower than usual, or over 2 minutes; needs 3 earlier runs |
+| Slow page rule | Build report code (constants at the top) | 2× and 2s slower than usual, or over 10 seconds; needs 3 earlier runs |
 | Baseline window | Get stats & baselines query | Last 14 days |
 | Uptime window in daily report | Get stats & baselines query | 7 days |
 | Missed-run check time | Daily 08:30 missed-run check node | 08:30 Asia/Dubai (Worker runs 04:00 UTC = 08:00 Dubai) |
@@ -109,8 +115,8 @@ where not ok
 order by run_at desc
 limit 20;
 
--- wake-up time trend for one demo
-select date_trunc('day', run_at) as day, wake_ms
+-- page load and wake-up history for one demo
+select date_trunc('day', run_at) as day, was_asleep, page_ms, ok
 from ops.demo_checks
 where demo = 'StockPOS'
 order by day;
@@ -118,6 +124,8 @@ order by day;
 
 ## Changelog
 
+- **v1.2**: follows the Worker's new check (one wake request, a 5-minute wait only if asleep, no polling): shows already awake vs woke up, slow-page warning based on page load time, Render wake-up refusals as their own status, shorter failure reasons; new `was_asleep` column.
+- **v1.1.1**: removed leftover v1.0 nodes.
 - **v1.1**: slow wake-up detection, failure streaks, Monday weekly summary, error workflow support.
 - **v1.0**: Worker results stored in Supabase, Telegram report per run, missed-run alert.
 
