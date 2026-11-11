@@ -8,7 +8,7 @@ It is the n8n version of the Cloudflare Worker that runs NB-Systems' own social 
 
 The workflow has five parts, each with a note on the canvas.
 
-1. **Add a client** (Form): the operator enters the client's name, Facebook Page id, timezone, report email and Page access token. The token is checked with Meta first. Only then is the client saved, and the token is stored encrypted in Supabase Vault. The Instagram account is found automatically from the Page.
+1. **Add a client** (Form): the operator enters the client's name, Facebook Page id, timezone, report email and Meta token. The token is checked with Meta first and swapped for the Page token, which publishing needs. Only then is the client saved, and the token is stored encrypted in Supabase Vault. The Instagram account is found automatically from the Page. Then the client's last 90 days of Facebook and Instagram posts are imported from Meta (up to 100 per platform), so their history shows right away. Submitting the form again updates the client and skips posts already imported.
 2. **Schedule a post** (Form): client, post id, image or reel URL, caption, hashtags, link, platforms and time. It checks the same rules Meta applies (JPEG for Instagram, MP4 for reels, 30 hashtags at most, a timezone on the time), so an accepted post will publish.
 3. **Publisher** (every 15 minutes, all clients):
    - Loads the due posts for each platform, with each client's token from Vault.
@@ -19,7 +19,7 @@ The workflow has five parts, each with a note on the canvas.
    - Once every platform is done, the post is marked `posted`, `partial` or `failed`.
 4. **Daily at 18:00**:
    - Each client gets the list of posts going out in the next 24 hours, so a post can be stopped in time. No email is sent on quiet days.
-   - Reach, views, likes, comments, shares and saves for the last 30 days of posts are read from Meta and stored.
+   - Reach, views, likes, comments, shares and saves for the last 90 days of posts are read from Meta and stored, including imported history.
 5. **Mondays at 09:00**: each client gets a weekly report with followers and the change since last week, results for each post, failed posts, and a 3 to 5 sentence analysis from Gemini. If Gemini is down, the report still goes out without the analysis. Each week is saved for the next comparison.
 
 ## Credentials needed
@@ -57,6 +57,7 @@ The client adds your Meta Business as a partner on their Page and Instagram acco
 | Retries before giving up | Describe failure node | 3 |
 | Posts per publish run | Load due posts query | 20 |
 | Posts refreshed per day | Posts to refresh query | 50 |
+| History imported for a new client | History rows node | Last 90 days, up to 100 posts per platform |
 
 Times in emails use each client's own timezone.
 
