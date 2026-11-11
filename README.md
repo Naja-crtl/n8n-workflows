@@ -10,7 +10,7 @@ Each workflow is importable as JSON and has its own README with setup steps, cre
 |---|---|---|
 | [Lead Capture](workflows/lead-capture/) | Public contact form that validates each submission, saves it to a Supabase leads table, sends genuine leads to Telegram instantly, and collects spam into one silent daily digest so no real lead is lost | n8n Form + daily schedule |
 | [Demo Monitor](workflows/demo-monitor/) v1.2 | Receives a Cloudflare Worker's daily health check of demo apps on Render, keeps uptime history, flags slow pages, wake-up refusals and failure streaks, sends a daily report and a weekly summary, and alerts if the check never ran | Webhook + daily and weekly schedules |
-| [Demo Alerts](workflows/demo-alerts/) v1.2 | Real-time Telegram alerts when a visitor wakes a sleeping demo, when it opens, and when it fails to start, sent by a Cloudflare Worker proxy in front of the demos | Webhook |
+| [Demo Alerts](workflows/demo-alerts/) v1.3 | Real-time Telegram alerts when a visitor wakes a sleeping demo, when it opens, and when it fails to start, sent by a Cloudflare Worker proxy in front of the demos | Webhook |
 | [Social Publisher](workflows/social-publisher/) | Multi-client Facebook and Instagram publishing: onboarding and scheduling forms, a publisher that retries and alerts per platform, a daily preview and results refresh, and a weekly report per client with an AI-written analysis | n8n Forms + 15-minute, daily and weekly schedules |
 | [Error Alerts](workflows/error-alerts/) | Shared error workflow: any failing workflow sends a Telegram alert with the workflow, the failed step, the error and a link to the execution | n8n Error Trigger |
 

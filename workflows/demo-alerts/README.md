@@ -2,6 +2,8 @@
 
 Telegram message when a visitor wakes a demo, when it opens, and an alert when it doesn't start. The demo-proxy Cloudflare Worker (in front of the demos on Render's free tier) sends the alert. Separate from [Demo Monitor](../demo-monitor/), which handles the daily check.
 
+**Version:** v1.3 (visitor's network and referring page on wake-up alerts)
+
 ## How it works
 
 1. **Demo-proxy alert** (Webhook): receives demo-proxy's POST, protected by a secret header (Header Auth).
@@ -12,7 +14,7 @@ Telegram message when a visitor wakes a demo, when it opens, and an alert when i
 
 demo-proxy only sends a message after a visitor's request, and nothing when the demo is already awake:
 
-- `waking` (👀): a visitor opened a sleeping demo and it is starting. Once per wake-up, with the visitor's country.
+- `waking` (👀): a visitor opened a sleeping demo and it is starting. Once per wake-up, with the visitor's country, network (internet provider or hosting company) and the page they came from. Sent only once the loading page's script runs, so bots that fetch the page and leave don't trigger it.
 - `opened` (✅): it started for them, with how many seconds it took.
 - `refused` (🚨): Render refused to start the demo (`x-render-routing: hibernate-rate-limited` or a Cloudflare challenge).
 - `slow` (🚨): the visitor waited 60 seconds and the demo still hadn't started.
@@ -65,7 +67,7 @@ curl -X POST https://<your-n8n-host>/webhook-test/demo-alerts \
 | `reason` | yes | `waking`, `opened`, `refused` or `slow`. |
 | `host` | no | The demo address the visitor opened. |
 | `source` | no | Sender label, max 60 chars. |
-| `details` | no | `waking`: `country`. `opened`: `wake_s`. `refused`/`slow`: Render's answer (`status`, `rndr_id`, `x_render_routing`, `cf_ray`, `server_timing`, or `error`). Max 4 KB. |
+| `details` | no | `waking`: `country`, `org` (network name), `from` (referring page). `opened`: `wake_s`. `refused`/`slow`: Render's answer (`status`, `rndr_id`, `x_render_routing`, `cf_ray`, `server_timing`, or `error`). Max 4 KB. |
 
 ## Useful queries
 
@@ -77,3 +79,8 @@ where alert_at >= now() - interval '30 days'
 group by demo, reason
 order by last desc;
 ```
+
+## Changelog
+
+- **v1.3**: wake-up alerts show the visitor's network and the page they came from, which helps tell real visitors from bots (a hosting company like Hetzner or Google is usually a bot). Needs the demo-proxy Worker version that sends `org` and `from`; older alerts still work without them.
+- **v1.2**: version first added to this repo.
