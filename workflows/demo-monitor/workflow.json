@@ -206,9 +206,9 @@
     },
     {
       "parameters": {
-        "content": "## Demo Monitor v1.2\n1. Run `setup.sql` in Supabase once (existing installs: run the v1.2 ALTER in the README)\n2. *Worker results*: **Header Auth** credential (name `X-Webhook-Secret`)\n3. Select **Postgres** in the four Postgres nodes\n4. Select the **monitoring bot** and set your chat ID in all three Telegram nodes\n5. Settings > Error workflow: **Error Alerts**\n6. Publish, then give the production webhook URL to the Worker\n7. **Daily 07:50 demo check** (this server wakes the demos; Render refuses Cloudflare Workers): Cloudflare account and D1 IDs in *Check settings*, **Header Auth** with the Cloudflare API token in *D1: record run*. The Worker's webhook stays as its standby.",
-        "height": 280,
-        "width": 380
+        "content": "## Demo Monitor v1.3\nDaily demo check runs here at 07:50 Dubai (Render refuses wake-ups from Cloudflare Workers). The Worker's webhook stays as its standby.\n1. Run `setup.sql` in Supabase once\n2. *Check settings*: Cloudflare account ID and D1 database ID\n3. *D1: record run*: **Header Auth** with the Cloudflare API token\n4. *Worker results*: **Header Auth** (`X-Webhook-Secret`), same secret as the Worker\n5. Select **Postgres** in the four Postgres nodes\n6. Select the **monitoring bot** and set your chat ID in all three Telegram nodes\n7. Settings > Error workflow: **Error Alerts**, then Publish",
+        "height": 320,
+        "width": 440
       },
       "id": "77fd8c01-6270-4262-8168-a9e76741a0f5",
       "name": "Setup note",
