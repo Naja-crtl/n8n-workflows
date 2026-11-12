@@ -206,7 +206,7 @@
     },
     {
       "parameters": {
-        "content": "## Demo Monitor v1.2\n1. Run `setup.sql` in Supabase once (existing installs: run the v1.2 ALTER in the README)\n2. *Worker results*: **Header Auth** credential (name `X-Webhook-Secret`)\n3. Select **Postgres** in the four Postgres nodes\n4. Select the **monitoring bot** and set your chat ID in all three Telegram nodes\n5. Settings > Error workflow: **Error Alerts**\n6. Publish, then give the production webhook URL to the Worker",
+        "content": "## Demo Monitor v1.2\n1. Run `setup.sql` in Supabase once (existing installs: run the v1.2 ALTER in the README)\n2. *Worker results*: **Header Auth** credential (name `X-Webhook-Secret`)\n3. Select **Postgres** in the four Postgres nodes\n4. Select the **monitoring bot** and set your chat ID in all three Telegram nodes\n5. Settings > Error workflow: **Error Alerts**\n6. Publish, then give the production webhook URL to the Worker\n7. **Daily 07:50 demo check** (this server wakes the demos; Render refuses Cloudflare Workers): Cloudflare account and D1 IDs in *Check settings*, **Header Auth** with the Cloudflare API token in *D1: record run*. The Worker's webhook stays as its standby.",
         "height": 280,
         "width": 380
       },
@@ -215,8 +215,8 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -60,
-        -320
+        -460,
+        -760
       ]
     },
     {
@@ -290,6 +290,85 @@
       "position": [
         660,
         640
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 7,
+              "triggerAtMinute": 50
+            }
+          ]
+        }
+      },
+      "id": "e3e7ea48-7bf6-4840-b6e1-35db92058173",
+      "name": "Daily 07:50 demo check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -440,
+        -300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "911420fa-42ed-45a7-9a5e-bd9fe0790f9a",
+      "name": "Test demo check",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// The one place to change settings for this workflow.\nreturn [{\n  json: {\n    // origin: the demo's Render address (woken directly); public: the address visitors use (through demo-proxy)\n    demos: [\n      { name: 'AutoServicePro', origin: 'https://autoservicepro-hrqe.onrender.com', public: 'autoservice-demo.naja.live' },\n      { name: 'FuelStationPro', origin: 'https://fuelstationpro-demo.onrender.com', public: 'fuelstation-demo.naja.live' },\n      { name: 'MarginTracker', origin: 'https://margintracker-demo.onrender.com', public: 'margintracker-demo.naja.live' },\n      { name: 'StockPOS', origin: 'https://stockpos.onrender.com', public: 'stockpos-demo.naja.live' },\n    ],\n    wake_timeout_ms: 100000, // Render holds the wake request while the app boots (20 to 45 s seen)\n    retry_wait_ms: 30000, // one more look after this, if the first answer wasn't the app\n    asleep_if_slower_ms: 5000, // an awake demo answers /health in under a second\n\n    // Cloudflare D1 (the marketing Worker's database): records the run, so the Worker's own check stands by\n    cf_account: 'YOUR_CLOUDFLARE_ACCOUNT_ID',\n    d1_database: 'YOUR_D1_DATABASE_ID',\n  },\n}];\n"
+      },
+      "id": "ba500ac9-bd4f-4824-87bf-cf58b98e0270",
+      "name": "Check settings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -220,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// The daily demo check, from n8n's own server. Render wakes a sleeping free service for a request from a normal\n// address (a visitor, this server) but refuses one from Cloudflare's shared addresses, so a check running in a\n// Cloudflare Worker was refused every morning. Per demo: one wake request to Render directly (Render holds it while\n// the app boots), one more look if needed, the start page timed, and the public address checked. Output: the same\n// payload the Worker sends to the webhook, so everything from \"Validate & flatten\" on is shared.\nconst s = $('Check settings').first().json;\nconst helpers = this.helpers;\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\nconst errMsg = (e) => (e instanceof Error ? e.message : String(e));\n\nasync function get(url, timeout, accept) {\n  return helpers.httpRequest({\n    method: 'GET',\n    url,\n    headers: { Accept: accept },\n    timeout,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true,\n    disableFollowRedirect: true,\n  });\n}\nconst header = (res, k) => String(res?.headers?.[k] ?? '');\n\n/** awake: the app answers plain text. refused: Render's wake limit or challenge. waking: anything else. */\nasync function health(origin) {\n  try {\n    const res = await get(`${origin}/health`, s.wake_timeout_ms, 'text/plain');\n    if (res.statusCode === 200 && header(res, 'content-type').startsWith('text/plain')) return { state: 'awake', status: 200 };\n    const refused = header(res, 'x-render-routing') === 'hibernate-rate-limited' || header(res, 'cf-mitigated') === 'challenge';\n    const detail = `health check answered ${res.statusCode}, x-render-routing: ${header(res, 'x-render-routing') || 'none'}, rndr-id: ${header(res, 'rndr-id') || 'none'}`;\n    return { state: refused ? 'refused' : 'waking', status: res.statusCode, detail };\n  } catch (e) {\n    return { state: 'waking', status: null, detail: `health check failed: ${errMsg(e)}` };\n  }\n}\n\n/** The start page, following at most 3 redirects (the apps send / to their login page). */\nasync function loadPage(origin) {\n  let url = `${origin}/`;\n  for (let hop = 1; ; hop++) {\n    const res = await get(url, 30000, 'text/html');\n    const to = header(res, 'location');\n    if (res.statusCode < 300 || res.statusCode >= 400 || !to || hop === 3) return res;\n    // Stay on the Render address: StockPOS redirects to its public address (APP_URL), where the demo-proxy would\n    // answer with its loading page (503) instead of the app.\n    const path = /^https?:\\/\\//.test(to) ? to.replace(/^https?:\\/\\/[^/]+/, '') || '/' : to;\n    url = path.startsWith('/') ? `${origin}${path}` : `${origin}/${path}`;\n  }\n}\n\nasync function checkDemo(d) {\n  const failed = (problem, status_code, extra = {}) => ({ name: d.name, ok: false, wake_ms: null, was_asleep: false, page_ms: null, status_code, problem, ...extra });\n  const t0 = Date.now();\n  let h = await health(d.origin);\n  if (h.state === 'waking') {\n    await sleep(s.retry_wait_ms);\n    h = await health(d.origin);\n  }\n  const wakeMs = Date.now() - t0;\n  const was_asleep = wakeMs > s.asleep_if_slower_ms;\n  const wake = { was_asleep, wake_ms: was_asleep ? wakeMs : null };\n  if (h.state === 'refused') return failed(`Render refused to wake it (rate limited) (${h.detail})`, h.status, wake);\n  if (h.state === 'waking') return failed(`did not wake up within ${Math.round(wakeMs / 1000)} s (${h.detail})`, h.status, wake);\n\n  const p0 = Date.now();\n  let page;\n  try {\n    page = await loadPage(d.origin);\n  } catch (e) {\n    return failed(`the start page failed: ${errMsg(e)}`, null, wake);\n  }\n  const page_ms = Date.now() - p0;\n  if (page.statusCode < 200 || page.statusCode >= 300) return failed(`the start page answered ${page.statusCode}`, page.statusCode, { ...wake, page_ms });\n\n  // The visitors' address goes through the demo-proxy Worker; robots.txt is answered by the proxy itself,\n  // so this checks it without touching the app or sending a \"visitor woke a demo\" alert.\n  try {\n    const pub = await get(`https://${d.public}/robots.txt`, 15000, 'text/plain');\n    if (pub.statusCode !== 200) return failed(`the public address ${d.public} answered ${pub.statusCode} (demo-proxy)`, pub.statusCode, { ...wake, page_ms });\n  } catch (e) {\n    return failed(`the public address ${d.public} failed: ${errMsg(e)} (demo-proxy)`, null, { ...wake, page_ms });\n  }\n  return { name: d.name, ok: true, ...wake, page_ms, status_code: page.statusCode, problem: null };\n}\n\nconst ranAt = new Date().toISOString();\nconst demos = await Promise.all(s.demos.map(checkDemo));\nconst down = demos.filter((d) => !d.ok).map((d) => d.name);\nreturn [{ json: { body: { ran_at: ranAt, source: 'n8n-demo-check', demos }, summary: JSON.stringify({ checked: demos.length, down }) } }];\n"
+      },
+      "id": "84d60b33-00a5-4547-aceb-28f3a2a8154d",
+      "name": "Check demos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.cloudflare.com/client/v4/accounts/{{ $('Check settings').first().json.cf_account }}/d1/database/{{ $('Check settings').first().json.d1_database }}/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ sql: \"INSERT INTO cron_runs (job, ran_at, ok, result, runner) VALUES ('demos', ?, 1, ?, 'n8n') ON CONFLICT (job) DO UPDATE SET ran_at = excluded.ran_at, ok = 1, result = excluded.result, runner = 'n8n'\", params: [Date.now(), $('Check demos').first().json.summary] }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "3f6deb77-8d53-4a02-acdc-b84e5fc15a7e",
+      "name": "D1: record run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        -460
       ]
     }
   ],
@@ -421,6 +500,55 @@
         [
           {
             "node": "Telegram weekly summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily 07:50 demo check": {
+      "main": [
+        [
+          {
+            "node": "Check settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test demo check": {
+      "main": [
+        [
+          {
+            "node": "Check settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check settings": {
+      "main": [
+        [
+          {
+            "node": "Check demos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check demos": {
+      "main": [
+        [
+          {
+            "node": "Validate & flatten",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "D1: record run",
             "type": "main",
             "index": 0
           }

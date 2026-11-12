@@ -4,7 +4,9 @@ Collects the daily results of a Cloudflare Worker that checks demo apps hosted o
 
 n8n never pings the demos itself. Free Render services sleep after inactivity and share a monthly hours budget, so the Worker's single daily wake-up stays the only check.
 
-**Version:** v1.2 (awake/woken status, slow-page warning, Render refusals)
+**Version:** v1.3 (the check runs from n8n; the Worker is the standby)
+
+**v1.3: the check runs here.** Render wakes a sleeping free service for a request from a normal address, like a visitor's browser, but refuses one from Cloudflare's shared addresses. A check running in a Cloudflare Worker was therefore refused every morning while the demos were fine. Now the **Daily 07:50 demo check** in this workflow wakes each demo through its Render address directly (and measures how long it took), times the start page, checks the public address through the demo-proxy, and feeds the results into the same path as the Worker's webhook. It also records the run in the Worker's D1 database, so the Worker's own 08:00 check stands by and only runs if this one didn't.
 
 ## How it works
 
@@ -123,6 +125,8 @@ order by day;
 ```
 
 ## Changelog
+
+- **v1.3**: the daily check runs from n8n (07:50 Dubai): one wake request per demo to its Render address, wake time measured, start page timed (redirects kept on the Render address), public address checked. The run is recorded in D1 so the Worker's check stands by. The Worker's webhook stays as its fallback.
 
 - **v1.2**: follows the Worker's new check (one wake request, a 5-minute wait only if asleep, no polling): shows already awake vs woke up, slow-page warning based on page load time, Render wake-up refusals as their own status, shorter failure reasons; new `was_asleep` column.
 - **v1.1.1**: removed leftover v1.0 nodes.
