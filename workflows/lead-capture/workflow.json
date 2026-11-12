@@ -132,9 +132,9 @@
     },
     {
       "parameters": {
-        "content": "## Lead Capture\n1. Run `setup.sql` in Supabase once\n2. Select your **Postgres** credential in *Save lead* and *Get last 24h spam*\n3. Select your **Telegram** credential and set your chat ID in *Telegram alert* and *Telegram spam digest*\n4. Publish, then share the form's production URL",
-        "height": 240,
-        "width": 340
+        "content": "## Lead Capture\n1. Run `setup.sql` in Supabase once\n2. Select your **Postgres** credential in *Save lead*, *Get last 24h spam* and *Save website lead*\n3. Select your **Telegram** credential and set your chat ID in the three Telegram nodes\n4. *Website lead*: **Header Auth** credential (name `X-Webhook-Secret`), same secret as the signup Worker's `N8N_WEBHOOK_SECRET`\n5. Publish, then share the form's production URL and give the webhook URL to the signup Worker",
+        "height": 300,
+        "width": 420
       },
       "id": "da5f4fc3-73ae-4e8b-84b1-e3da69628145",
       "name": "Setup note",
@@ -221,6 +221,90 @@
         660,
         320
       ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "website-leads",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "7288913b-5db1-4215-b951-a4be0ebc115e",
+      "name": "Website lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        640
+      ],
+      "webhookId": "1b93e343-bd73-403f-b1db-6b77c9e00ae0"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Leads from the website (signup Worker): demo signups and quote requests. Brevo already has them and keeps sending\n// the emails; this keeps every lead in crm.leads too, so the reports see all leads in one place.\nconst b = $json.body ?? {};\nconst clean = (v, max) => String(v ?? '').trim().replace(/\\s+/g, ' ').slice(0, max);\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst kind = b.kind === 'quote' || b.kind === 'demo' ? b.kind : null;\nconst email = clean(b.email, 200).toLowerCase();\nconst name = clean(b.name, 100);\nif (!kind || !name || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email)) {\n  throw new Error(`Invalid website lead (kind: ${String(b.kind).slice(0, 20)}, name: ${!!name}, email: ${!!email})`);\n}\nconst from = clean(b.utm_source, 50).toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'direct';\nconst phone = clean(b.phone, 40) || null;\nconst company = clean(b.company, 100) || null;\nconst demo = clean(b.demo, 60) || 'not specified';\nconst business = clean(b.business, 100) || 'not specified';\nconst message = kind === 'quote'\n  ? String(b.message ?? '').trim().slice(0, 4000) || '(no answers)'\n  : `Demo signup: ${demo}${b.returning ? ' (already confirmed, demo email sent again)' : ' (confirmation email sent)'}`;\n\n// For Telegram, drop the answer lines the header already shows (the full text is still saved).\nconst answers = message\n  .split('\\n')\n  .filter((l) => !/^(Name|Email|Company|Phone|Business|Came from):/.test(l))\n  .join('\\n')\n  .replace(/\\n{3,}/g, '\\n\\n')\n  .trim();\n\n// \"#ID\" is replaced with the new row's id in the Telegram node.\nconst text = kind === 'quote'\n  ? `💼 <b>New quote request #ID</b>\\n\\n<b>Name:</b> ${esc(name)}\\n<b>Email:</b> ${esc(email)}\\n<b>Phone:</b> ${esc(phone ?? '-')}\\n<b>Company:</b> ${esc(company ?? '-')}\\n<b>Business:</b> ${esc(business)}\\n<b>Came from:</b> ${esc(from)}\\n\\n${esc(answers.length > 900 ? answers.slice(0, 900) + '...' : answers)}\\n\\n<i>They were told you'd reply within 1 to 2 working days.</i>`\n  : `🎟 <b>Demo signup #ID</b>: ${esc(name)}${company ? ` (${esc(company)})` : ''} wants <b>${esc(demo)}</b> · from ${esc(from)}${b.returning ? ' · returning' : ''}`;\n\nreturn [{\n  json: {\n    name, email, phone, company, message,\n    // quote requests need a reply; demo signups are answered by Brevo's demo emails\n    status: kind === 'quote' ? 'new' : 'contacted',\n    source: `${kind === 'quote' ? 'quote' : 'demo-signup'}:${from}`,\n    silent: kind !== 'quote',\n    text,\n  },\n}];\n"
+      },
+      "id": "422bc9cb-a7d7-41d9-9774-f872f213b01f",
+      "name": "Validate website lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"received\": true } }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "b2e69d2c-7f65-4c6e-8d94-e78d2ea479e8",
+      "name": "Acknowledge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO crm.leads (name, email, phone, company, message, source, status)\nVALUES ($1, $2, $3, $4, $5, $6, $7)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.name, $json.email, $json.phone, $json.company, $json.message, $json.source, $json.status] }}"
+        }
+      },
+      "id": "215a6e9a-3761-4a77-8fa5-da98aca8da4b",
+      "name": "Save website lead",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        660,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $('Validate website lead').item.json.text.replace('#ID', '#' + $json.id) }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_notification": "={{ $('Validate website lead').item.json.silent }}"
+        }
+      },
+      "id": "c37f28c5-2ed7-4d68-8544-f87dff1b871b",
+      "name": "Telegram website lead",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        640
+      ]
     }
   ],
   "connections": {
@@ -302,6 +386,50 @@
         [
           {
             "node": "Telegram spam digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Website lead": {
+      "main": [
+        [
+          {
+            "node": "Validate website lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate website lead": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge": {
+      "main": [
+        [
+          {
+            "node": "Save website lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save website lead": {
+      "main": [
+        [
+          {
+            "node": "Telegram website lead",
             "type": "main",
             "index": 0
           }

@@ -17,12 +17,32 @@ A public contact form that cleans and validates every submission, stores it in a
 3. **Build digest** (Code): combines them into one message. If there were none, nothing is sent.
 4. **Telegram spam digest**: sends the summary silently, with the SQL to restore any real lead.
 
+**Website leads** (third trigger in the same workflow):
+
+The website's demo popups and quote wizard go through a Cloudflare Worker into Brevo, which sends the opt-in, demo and follow-up emails. After Brevo has the lead, the Worker also sends a copy here, so every lead lands in the same `crm.leads` table and the reports see them all.
+
+1. **Website lead** (Webhook, `POST /webhook/website-leads`): protected by a secret header (Header Auth).
+2. **Validate website lead** (Code): checks the payload and builds the row and the Telegram message. Bad payloads are rejected.
+3. **Acknowledge**: replies `202` right away.
+4. **Save website lead** (Postgres): `source` is `quote:<utm source>` or `demo-signup:<utm source>`. Quote requests are saved as `new` (they need a reply); demo signups as `contacted` (Brevo's demo emails answer them), so "waiting for a reply" stays honest.
+5. **Telegram website lead**: quote requests with sound and the full answers, demo signups silently.
+
+Payload sent by the Worker:
+
+```json
+{ "at": "2026-11-13T10:00:00Z", "kind": "quote", "name": "...", "email": "...", "phone": "", "company": "",
+  "business": "Gas station", "message": "the wizard answers", "utm_source": "facebook", "utm_medium": "post", "utm_campaign": "..." }
+```
+
+For a demo signup, `kind` is `demo`, with `demo` (the demo name) and `returning` (already confirmed) instead of `business` and `message`.
+
 ## Credentials needed
 
 | n8n credential type | Used by node | Notes |
 |---|---|---|
-| Postgres | Save lead, Get last 24h spam | Supabase **Session pooler** host, port 5432, database `postgres`, user `postgres.<project-ref>`, SSL **Require**, and turn on **Ignore SSL Issues** (Supabase's certificate chain isn't trusted by default; traffic stays encrypted) |
-| Telegram API | Telegram alert, Telegram spam digest | Bot token from [@BotFather](https://t.me/BotFather) |
+| Postgres | Save lead, Get last 24h spam, Save website lead | Supabase **Session pooler** host, port 5432, database `postgres`, user `postgres.<project-ref>`, SSL **Require**, and turn on **Ignore SSL Issues** (Supabase's certificate chain isn't trusted by default; traffic stays encrypted) |
+| Telegram API | Telegram alert, Telegram spam digest, Telegram website lead | Bot token from [@BotFather](https://t.me/BotFather) |
+| Header Auth | Website lead | Name `X-Webhook-Secret`; the same value goes into the signup Worker as `N8N_WEBHOOK_SECRET` |
 
 ## Setup
 
