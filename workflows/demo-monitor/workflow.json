@@ -225,7 +225,6 @@
           "interval": [
             {
               "field": "weeks",
-              "weeksInterval": 1,
               "triggerAtDay": [
                 1
               ],
@@ -447,8 +446,7 @@
             "type": "main",
             "index": 0
           }
-        ],
-        []
+        ]
       ]
     },
     "Daily 08:30 missed-run check": {
