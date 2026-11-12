@@ -1,6 +1,6 @@
 # n8n Workflows
 
-Production automation workflows built with [n8n](https://n8n.io) and running on my own self-hosted instance. They capture leads, monitor live demo apps, and send alerts to Telegram, with every event stored in Postgres for history and reporting.
+Production automation workflows built with [n8n](https://n8n.io) and running on my own self-hosted instance. They capture leads, monitor live demo apps, and send alerts to Telegram, with every event stored in Postgres for history and reporting. Every morning a self-hosted AI agent ([Hermes](https://github.com/NousResearch/hermes-agent)) reads the day's numbers and writes a report with what needs attention and one idea to improve.
 
 Each workflow is importable as JSON and has its own README with setup steps, credentials and example messages.
 
@@ -12,6 +12,7 @@ Each workflow is importable as JSON and has its own README with setup steps, cre
 | [Demo Monitor](workflows/demo-monitor/) v1.2 | Receives a Cloudflare Worker's daily health check of demo apps on Render, keeps uptime history, flags slow pages, wake-up refusals and failure streaks, sends a daily report and a weekly summary, and alerts if the check never ran | Webhook + daily and weekly schedules |
 | [Demo Alerts](workflows/demo-alerts/) v1.3 | Real-time Telegram alerts when a visitor wakes a sleeping demo, when it opens, and when it fails to start, sent by a Cloudflare Worker proxy in front of the demos | Webhook |
 | [Social Publisher](workflows/social-publisher/) | Multi-client Facebook and Instagram publishing: onboarding and scheduling forms, a publisher that retries and alerts per platform, a daily preview and results refresh, and a weekly report per client with an AI-written analysis | n8n Forms + 15-minute, daily and weekly schedules |
+| [Daily Analyst](workflows/daily-analyst/) | Collects the day's numbers from every system (posts and results, leads, demo uptime, workflow failures), sends the totals to a self-hosted Hermes Agent with memory, and posts its report to Telegram: what needs attention, week-over-week trends, one improvement idea and today's top action. Free models with automatic fallback | Daily schedule |
 | [Error Alerts](workflows/error-alerts/) | Shared error workflow: any failing workflow sends a Telegram alert with the workflow, the failed step, the error and a link to the execution | n8n Error Trigger |
 
 New workflows start from [`_template`](workflows/_template/).
@@ -30,7 +31,9 @@ flowchart LR
         monitor[Demo Monitor]
         alerts[Demo Alerts]
         errors[Error Alerts]
+        analyst[Daily Analyst]
     end
+    hermes[Hermes Agent, self-hosted]
     db[(Supabase Postgres)]
     tg[Telegram]
 
@@ -48,12 +51,17 @@ flowchart LR
     monitor -. on failure .-> errors
     alerts -. on failure .-> errors
     errors --> tg
+    db -- daily totals --> analyst
+    analyst -- summary --> hermes
+    hermes -- report --> analyst
+    analyst --> tg
 ```
 
 - **Cloudflare Workers** do the checking at the edge and push results to n8n. n8n never pings the demos itself, so the free-tier hosting budget is not wasted.
 - **n8n** validates every payload, stores it, decides what is worth a notification, and formats the message.
 - **Supabase Postgres** keeps the full history (leads, health checks, alerts) in separate schemas with row level security on.
 - **Telegram** is the notification channel: loud for problems that need action, silent for reports and digests.
+- **Hermes Agent** runs next to n8n, reachable only from n8n, with every tool except memory turned off. n8n does the data work with fixed queries; the agent only reads the totals and writes the report.
 
 ## Tech used
 
@@ -62,6 +70,7 @@ flowchart LR
 | Automation | n8n (Form, Webhook, Schedule and Error triggers, Code nodes in JavaScript, Postgres, Telegram) |
 | Edge | Cloudflare Workers (TypeScript) |
 | Database | Supabase Postgres, SQL views and indexes |
+| AI agent | Hermes Agent (Nous Research), self-hosted in Docker; Google AI Studio and OpenRouter free models with automatic fallback |
 | Notifications | Telegram Bot API |
 | Hosting | Docker Compose on an Oracle Cloud Arm VM, Caddy for automatic HTTPS |
 

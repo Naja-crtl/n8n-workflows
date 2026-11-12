@@ -1,0 +1,384 @@
+{
+  "name": "Daily Analyst (Hermes)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Daily Analyst (Hermes)\nEvery morning: collects marketing (Cloudflare D1), leads and demos (Supabase) and workflow runs (n8n), sends the totals to a self-hosted **Hermes Agent**, and posts its report to Telegram. Only counts and statuses are sent, never names, emails or messages.\n1. **Settings** node: Cloudflare account id and D1 database id\n2. **Postgres** credential in the two Postgres nodes\n3. **Header Auth** `Cloudflare nb-marketing` in the three **D1:** nodes\n4. **Header Auth** `Hermes API` (`Authorization: Bearer <API_SERVER_KEY>`) in **Ask Hermes**\n5. **Telegram** credential + your chat id in **Telegram report**\n6. Settings > Error workflow: **Error Alerts**",
+        "height": 380,
+        "width": 480
+      },
+      "id": "d4012614-413c-4c04-b033-ccaf89dc02c1",
+      "name": "Setup note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -420
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "b8b9cbe1-b077-4a85-9cb6-ddadcd1e8377",
+      "name": "Test run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8,
+              "triggerAtMinute": 50
+            }
+          ]
+        }
+      },
+      "id": "f87ebb2d-8fbd-4213-b79e-0a556b7ab904",
+      "name": "Every day 08:50",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// The one place to change settings for this workflow.\nreturn [{\n  json: {\n    cf_account: 'YOUR_CLOUDFLARE_ACCOUNT_ID',\n    d1_database: 'YOUR_D1_DATABASE_ID', // the marketing Worker's D1 database\n    hermes_url: 'http://hermes:8642/v1/chat/completions', // Hermes in the same Docker network as n8n\n    hermes_model: 'hermes-agent', // Hermes answers with its own configured model chain\n    session_key: 'daily-analyst', // Hermes keeps this report's memory under this name\n    timezone: 'Asia/Dubai',\n\n    // What Hermes needs to suggest useful improvements. Your words; update it when your focus changes.\n    goals: `NB-Systems builds custom business software (POS, gas station and distributor systems, websites and apps)\nfor small businesses in Lebanon. Website: nb-systems.naja.live, with live demos and an AI assistant (Shater).\nMain goal now: the first paying clients. Channels: Facebook, Instagram and LinkedIn posts, the website, WhatsApp, referrals.\nLeads come from the contact form, demo signups and quote requests. A demo being woken by a visitor means real interest.\n\nThings to know (don't suggest against these without saying why):\n- LinkedIn posts go to the owner's personal profile. LinkedIn gives no results for those, so LinkedIn numbers are always 0. Ignore them.\n- The demos run on Render's free tier on purpose (no cost). They sleep when unused and a visitor wakes them. Frequent pings\n  or uptime monitors would use up Render's 750 free hours a month, so never suggest pinging. \"Refused\" means Render's\n  wake-up limit, not a broken app. The owner also has a free, always-on Oracle Cloud server (24 GB RAM) that could host them.\n- AutoServicePro is sold and supported by the partner Khulasa Systems, not by NB-Systems. Don't suggest work on it.\n- Posts are prepared once a month in a batch and scheduled; the automation only publishes them.`,\n  },\n}];\n"
+      },
+      "id": "59d86952-43dd-4200-b50f-9e10d386dde3",
+      "name": "Settings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n(SELECT count(*) FROM crm.leads WHERE created_at >= now() - interval '24 hours' AND status <> 'spam')::int AS leads_new_24h,\n(SELECT count(*) FROM crm.leads WHERE created_at >= now() - interval '24 hours' AND status = 'spam')::int AS leads_spam_24h,\n(SELECT count(*) FROM crm.leads WHERE created_at >= now() - interval '7 days' AND status <> 'spam')::int AS leads_new_7d,\n(SELECT count(*) FROM crm.leads WHERE created_at >= now() - interval '14 days' AND created_at < now() - interval '7 days' AND status <> 'spam')::int AS leads_new_prev_7d,\n(SELECT count(*) FROM crm.leads WHERE status = 'new')::int AS leads_waiting,\n(SELECT coalesce(json_object_agg(source, n), '{}') FROM (\nSELECT source, count(*)::int AS n FROM crm.leads\nWHERE created_at >= now() - interval '7 days' AND status <> 'spam' GROUP BY source) s) AS leads_by_source_7d,\n(SELECT coalesce(json_agg(x ORDER BY x.demo), '[]') FROM (\nSELECT DISTINCT ON (demo) demo, ok, run_at, left(problem, 120) AS problem\nFROM ops.demo_checks ORDER BY demo, run_at DESC) x) AS demos_latest,\n(SELECT coalesce(json_object_agg(demo, pct), '{}') FROM (\nSELECT demo, round(100.0 * count(*) FILTER (WHERE ok) / count(*))::int AS pct\nFROM ops.demo_checks WHERE run_at >= now() - interval '7 days' GROUP BY demo) u) AS demos_uptime_7d,\n(SELECT coalesce(json_agg(a), '[]') FROM (\nSELECT demo, reason, count(*)::int AS n FROM ops.demo_alerts\nWHERE alert_at >= now() - interval '24 hours' GROUP BY demo, reason) a) AS demo_alerts_24h;",
+        "options": {}
+      },
+      "id": "0c664238-5c5b-4e34-90ab-07ba68dcd1e3",
+      "name": "Leads & demos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        440,
+        100
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT w.name,\ncount(*)::int AS runs,\ncount(*) FILTER (WHERE e.status IN ('error', 'crashed'))::int AS failed,\nmax(e.\"startedAt\") FILTER (WHERE e.status IN ('error', 'crashed')) AS last_failure\nFROM public.execution_entity e\nJOIN public.workflow_entity w ON w.id = e.\"workflowId\"\nWHERE e.\"startedAt\" >= now() - interval '24 hours' AND e.mode <> 'manual'\nGROUP BY w.name ORDER BY w.name;",
+        "options": {}
+      },
+      "id": "76b77918-4a4d-4d5c-b0c3-b0cb70e2fcf9",
+      "name": "Workflow runs (24h)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        660,
+        100
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.cloudflare.com/client/v4/accounts/{{ $('Settings').first().json.cf_account }}/d1/database/{{ $('Settings').first().json.d1_database }}/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ sql: \"SELECT job, ran_at, ok, runner FROM cron_runs WHERE job NOT LIKE '%:dry-run' ORDER BY job\", params: [] }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "88d76a2c-3b15-46fb-b073-c96b69587767",
+      "name": "D1: automatic jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        100
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.cloudflare.com/client/v4/accounts/{{ $('Settings').first().json.cf_account }}/d1/database/{{ $('Settings').first().json.d1_database }}/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ sql: \"SELECT t.post_id, t.platform, t.status, t.attempts, t.error, t.posted_at, t.updated_at, i.reach, i.views, i.likes, i.comments, i.shares, i.saves FROM post_targets t LEFT JOIN post_insights i ON i.post_id = t.post_id AND i.platform = t.platform WHERE t.updated_at >= ? OR t.posted_at >= ?\", params: [Date.now() - 14 * 86400000, Date.now() - 14 * 86400000] }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "1d571569-0a90-4ee1-83a4-8c43e32a8350",
+      "name": "D1: posts (14 days)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        100
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.cloudflare.com/client/v4/accounts/{{ $('Settings').first().json.cf_account }}/d1/database/{{ $('Settings').first().json.d1_database }}/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ sql: \"SELECT id, scheduled_at, status FROM posts WHERE status IN ('scheduled', 'paused') AND scheduled_at < ? ORDER BY scheduled_at\", params: [Date.now() + 7 * 86400000] }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "4db40d9f-3fc6-4739-9510-fc3edeb774e2",
+      "name": "D1: upcoming posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        100
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turns every data source into one small summary for Hermes: totals and statuses only.\n// No lead names, emails or messages ever leave this node (free AI tiers may learn from what they receive).\nconst s = $('Settings').first().json;\nconst DAY = 86_400_000;\nconst now = Date.now();\nconst rows = (node) => {\n  try { return $(node).all().map((i) => i.json).filter((r) => r && Object.keys(r).length && !r.error); } catch { return []; }\n};\nconst d1 = (node) => {\n  try { const j = $(node).first().json; return j.error ? [] : j.result?.[0]?.results ?? []; } catch { return []; }\n};\nconst sum = (list, k) => list.reduce((t, r) => t + (Number(r[k]) || 0), 0);\nconst iso = (ms) => (ms ? new Date(ms).toISOString() : null);\n\n// ---------- leads and demos (Supabase) ----------\nconst biz = rows('Leads & demos')[0] ?? {};\n\n// ---------- workflows (n8n's own execution log) ----------\nconst runs = rows('Workflow runs (24h)');\nconst workflows = runs.map((r) => ({ name: r.name, runs: Number(r.runs), failed: Number(r.failed), last_failure: r.last_failure }));\n\n// ---------- marketing (Cloudflare D1) ----------\nconst targets = d1('D1: posts (14 days)');\nconst inWindow = (r, from, to) => r.posted_at && r.posted_at >= from && r.posted_at < to;\nconst platformStats = (from, to) => {\n  const out = {};\n  for (const r of targets.filter((t) => t.status === 'posted' && inWindow(t, from, to))) {\n    const p = (out[r.platform] ??= { posts: 0, reach: 0, views: 0, likes: 0, comments: 0, shares: 0, saves: 0 });\n    p.posts++;\n    for (const k of ['reach', 'views', 'likes', 'comments', 'shares', 'saves']) p[k] += Number(r[k]) || 0;\n  }\n  return out;\n};\nconst failed = targets\n  .filter((t) => t.status === 'failed' && t.updated_at >= now - DAY)\n  .map((t) => ({ post: t.post_id, platform: t.platform, attempts: t.attempts, error: String(t.error ?? '').slice(0, 160) }));\nconst retrying = targets\n  .filter((t) => (t.status === 'pending' || t.status === 'processing') && t.attempts > 0)\n  .map((t) => ({ post: t.post_id, platform: t.platform, attempts: t.attempts, error: String(t.error ?? '').slice(0, 160) }));\nconst posted24h = targets.filter((t) => t.status === 'posted' && t.posted_at >= now - DAY).map((t) => `${t.post_id}/${t.platform}`);\nconst upcoming = d1('D1: upcoming posts');\n\nconst jobs = d1('D1: automatic jobs').map((j) => ({\n  job: j.job,\n  last_run: iso(j.ran_at),\n  hours_ago: Math.round((now - j.ran_at) / 3_600_000),\n  ok: !!j.ok,\n  runner: j.runner === 'n8n' ? 'n8n' : 'Cloudflare Worker',\n}));\n\nconst facts = {\n  date: new Intl.DateTimeFormat('en-GB', { timeZone: s.timezone, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(now),\n  timezone: s.timezone,\n  marketing: {\n    posted_last_24h: posted24h,\n    failed_last_24h: failed,\n    retrying_now: retrying,\n    results_last_7d: platformStats(now - 7 * DAY, now),\n    results_previous_7d: platformStats(now - 14 * DAY, now - 7 * DAY),\n    scheduled_next_7d: upcoming.map((u) => ({ post: u.id, when: iso(u.scheduled_at), status: u.status })),\n  },\n  leads: {\n    new_last_24h: biz.leads_new_24h ?? null,\n    spam_last_24h: biz.leads_spam_24h ?? null,\n    new_last_7d: biz.leads_new_7d ?? null,\n    new_previous_7d: biz.leads_new_prev_7d ?? null,\n    waiting_for_reply: biz.leads_waiting ?? null,\n    by_source_last_7d: biz.leads_by_source_7d ?? {},\n  },\n  demos: {\n    latest_check: biz.demos_latest ?? [],\n    uptime_7d_pct: biz.demos_uptime_7d ?? {},\n    alerts_last_24h: biz.demo_alerts_24h ?? [],\n  },\n  automations: {\n    workflows_last_24h: workflows,\n    scheduled_jobs: jobs,\n    data_missing: [\n      !Object.keys(biz).length && 'leads and demos (Supabase query failed)',\n      !runs.length && 'n8n workflow runs (query failed or nothing ran)',\n      !targets.length && !jobs.length && 'marketing (D1 query failed)',\n    ].filter(Boolean),\n  },\n};\n\n// Loud notification only when something needs action today.\nconst urgent =\n  failed.length > 0 ||\n  workflows.some((w) => w.failed > 0) ||\n  (facts.demos.latest_check || []).some((d) => d.ok === false) ||\n  jobs.some((j) => !j.ok || (j.job === 'publish' && j.runner !== 'n8n'));\n\n// Plain fallback text, used only if Hermes can't be reached.\nconst fallback = [\n  `Leads: ${facts.leads.new_last_24h ?? '?'} new in 24h, ${facts.leads.waiting_for_reply ?? '?'} waiting for a reply`,\n  `Posts: ${posted24h.length} published, ${failed.length} failed in 24h, ${upcoming.length} scheduled this week`,\n  `Demos: ${(facts.demos.latest_check || []).filter((d) => d.ok === false).map((d) => d.demo).join(', ') || 'all up'} ${(facts.demos.latest_check || []).some((d) => d.ok === false) ? 'down' : ''}`.trim(),\n  `Workflows: ${workflows.filter((w) => w.failed > 0).map((w) => `${w.name} (${w.failed} failed)`).join(', ') || 'no failures'}`,\n].join('\\n');\n\nconst weekly = new Intl.DateTimeFormat('en-GB', { timeZone: s.timezone, weekday: 'long' }).format(now) === 'Monday';\n\n// What Hermes is asked. Plain text out (no HTML/markdown), so Telegram can't reject the message.\nconst instructions = `You are the operations analyst for NB-Systems, a small software company in Lebanon.\nEvery morning you get the facts below and write the daily report the owner reads on Telegram.\n\nRules:\n- Use only the numbers in the facts. Never invent or estimate numbers.\n- Plain text only: no markdown, no asterisks, no HTML. Short lines. Emojis only as section markers.\n- At most 18 lines (25 on Mondays). Sections, in this order, skipping any with nothing to say:\n  1. One status line. Write \"All good\" only if \"Needs attention\" would be empty; otherwise name the most important\n     problem in a few words (for example \"4 demos down, no leads this week\").\n  2. Needs attention: failed posts, workflow failures, demos down, jobs that failed or are overdue. Say what to do.\n  3. Marketing: what was posted, results vs the previous 7 days (up or down, with numbers).\n  4. Leads: new leads and how many wait for a reply. Compare with the previous 7 days.\n  5. Demos and automations: one line unless something is wrong.\n- Context you can rely on: the \"publish\" job is expected to run on n8n; if it shows the Cloudflare Worker, n8n stopped and the\n  Worker took over, which needs attention. The other scheduled jobs still run on the Cloudflare Worker by design (for now).\n- Then one line starting \"Idea:\" with one concrete way to improve the business, based on today's facts and the goals\n  below (for example which kind of post worked best, a lead source to push, a demo to fix first). Not generic advice.\n${weekly ? `- It is Monday: after the Idea line, add \"Weekly review:\" with 3 short, specific improvements for this week,\n  one each for marketing, getting leads, and the demos or automations. Base them on the last 7 days and on your memory.\\n` : ''}- End with one line starting \"Today:\" with the single most useful action.\n- Memory: before writing, check your memory for earlier reports and ideas. Mention real trends (for example a third day\n  without leads) and follow up on earlier ideas when the numbers show their effect. Never repeat an idea you gave in\n  the last 7 days. After writing, save one short memory note: today's key numbers, the idea you gave, anything to watch.\n\nBusiness and goals (from the owner):\n${s.goals}`;\n\nconst request = {\n  model: s.hermes_model,\n  messages: [\n    { role: 'system', content: instructions },\n    { role: 'user', content: `Facts for today (JSON):\\n${JSON.stringify(facts)}` },\n  ],\n};\n\nreturn [{ json: { facts, urgent, fallback, request } }];\n"
+      },
+      "id": "484d5589-b3c8-4f52-a743-484ea4681205",
+      "name": "Build summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.hermes_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Hermes-Session-Key",
+              "value": "={{ $('Settings').first().json.session_key }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "fe43960d-7ac2-4ed7-93eb-f2cb711bf15e",
+      "name": "Ask Hermes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// The Telegram message: Hermes' report, or the plain numbers if Hermes couldn't answer (so a report always arrives).\nconst sum = $('Build summary').first().json;\nconst res = $json;\nconst reply = String(res?.choices?.[0]?.message?.content ?? '').trim();\nconst date = sum.facts.date;\n\nconst text = reply\n  ? `🧠 Daily report · ${date}\\n\\n${reply}`\n  : `🧠 Daily report · ${date}\\n\\n⚠️ Hermes couldn't write today's report (${String(res?.error?.message ?? res?.error ?? 'no answer').slice(0, 200)}). The numbers:\\n\\n${sum.fallback}`;\n\n// Telegram's limit is 4096 characters.\nreturn [{ json: { text: text.slice(0, 4000), silent: !sum.urgent && !!reply } }];\n"
+      },
+      "id": "62743bf6-93eb-480b-b2d4-b475471819e6",
+      "name": "Format message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_notification": "={{ $json.silent }}"
+        }
+      },
+      "id": "a54d561d-ee1f-4cbc-be4b-9ad801833525",
+      "name": "Telegram report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Test run": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every day 08:50": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Leads & demos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leads & demos": {
+      "main": [
+        [
+          {
+            "node": "Workflow runs (24h)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow runs (24h)": {
+      "main": [
+        [
+          {
+            "node": "D1: automatic jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "D1: automatic jobs": {
+      "main": [
+        [
+          {
+            "node": "D1: posts (14 days)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "D1: posts (14 days)": {
+      "main": [
+        [
+          {
+            "node": "D1: upcoming posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "D1: upcoming posts": {
+      "main": [
+        [
+          {
+            "node": "Build summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build summary": {
+      "main": [
+        [
+          {
+            "node": "Ask Hermes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask Hermes": {
+      "main": [
+        [
+          {
+            "node": "Format message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format message": {
+      "main": [
+        [
+          {
+            "node": "Telegram report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Dubai"
+  },
+  "tags": []
+}
