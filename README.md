@@ -9,7 +9,7 @@ Each workflow is importable as JSON and has its own README with setup steps, cre
 | Workflow | What it does | Trigger |
 |---|---|---|
 | [Lead Capture](workflows/lead-capture/) | Public contact form that validates each submission, saves it to a Supabase leads table, sends genuine leads to Telegram instantly, and collects spam into one silent daily digest so no real lead is lost. Website demo signups and quote requests arrive here too (copied by the signup Worker after Brevo), so every lead is in one table | n8n Form + webhook + daily schedule |
-| [Demo Monitor](workflows/demo-monitor/) v1.2 | Receives a Cloudflare Worker's daily health check of demo apps on Render, keeps uptime history, flags slow pages, wake-up refusals and failure streaks, sends a daily report and a weekly summary, and alerts if the check never ran | Webhook + daily and weekly schedules |
+| [Demo Monitor](workflows/demo-monitor/) v1.3 | Checks every morning that each demo app on Render wakes up and opens (a Cloudflare Worker's check stands by in case n8n misses a run), keeps uptime history, flags slow pages, wake-up refusals and failure streaks, sends a daily report and a weekly summary, and alerts if the check never ran | Webhook + daily and weekly schedules |
 | [Demo Alerts](workflows/demo-alerts/) v1.3 | Real-time Telegram alerts when a visitor wakes a sleeping demo, when it opens, and when it fails to start, sent by a Cloudflare Worker proxy in front of the demos | Webhook |
 | [Social Publisher](workflows/social-publisher/) | Multi-client Facebook and Instagram publishing: onboarding and scheduling forms, a publisher that retries and alerts per platform, a daily preview and results refresh, and a weekly report per client with an AI-written analysis | n8n Forms + 15-minute, daily and weekly schedules |
 | [Daily Analyst](workflows/daily-analyst/) | Collects the day's numbers from every system (posts and results, leads, demo uptime, workflow failures), sends the totals to a self-hosted Hermes Agent with memory, and posts its report to Telegram: what needs attention, week-over-week trends, one improvement idea and today's top action. Free models with automatic fallback | Daily schedule |
@@ -23,7 +23,7 @@ New workflows start from [`_template`](workflows/_template/).
 flowchart LR
     visitor([Website visitor])
     subgraph cf [Cloudflare Workers]
-        checker[Daily demo checker]
+        checker[Standby demo checker]
         proxy[demo-proxy]
     end
     subgraph n8n [n8n, self-hosted]
@@ -34,12 +34,15 @@ flowchart LR
         analyst[Daily Analyst]
     end
     hermes[Hermes Agent, self-hosted]
+    demos([Demo apps on Render])
     db[(Supabase Postgres)]
     tg[Telegram]
 
     visitor -- contact form --> lead
     visitor -- opens a demo --> proxy
-    checker -- results webhook --> monitor
+    monitor -- daily wake and check --> demos
+    proxy --> demos
+    checker -. only if n8n missed the run .-> monitor
     proxy -- alert webhook --> alerts
     lead --> db
     monitor --> db
@@ -57,11 +60,11 @@ flowchart LR
     analyst --> tg
 ```
 
-- **Cloudflare Workers** do the checking at the edge and push results to n8n. n8n never pings the demos itself, so the free-tier hosting budget is not wasted.
+- **Cloudflare Workers** sit in front of the demos (the demo-proxy sends visitor alerts) and stand by: n8n records each run, and if it misses one, the Worker does the job instead and emails about it. The daily demo check runs from n8n because Render refuses to wake a free service for requests from Cloudflare's shared addresses.
 - **n8n** validates every payload, stores it, decides what is worth a notification, and formats the message.
 - **Supabase Postgres** keeps the full history (leads, health checks, alerts) in separate schemas with row level security on.
 - **Telegram** is the notification channel: loud for problems that need action, silent for reports and digests.
-- **Hermes Agent** runs next to n8n, reachable only from n8n, with every tool except memory turned off. n8n does the data work with fixed queries; the agent only reads the totals and writes the report.
+- **Hermes Agent** runs next to n8n with every tool except memory turned off. Its API is reachable only from n8n; it also has its own Telegram bot that answers only my account. n8n does the data work with fixed queries; the agent only reads the totals and writes the report.
 
 ## Tech used
 
@@ -70,7 +73,7 @@ flowchart LR
 | Automation | n8n (Form, Webhook, Schedule and Error triggers, Code nodes in JavaScript, Postgres, Telegram) |
 | Edge | Cloudflare Workers (TypeScript) |
 | Database | Supabase Postgres, SQL views and indexes |
-| AI agent | Hermes Agent (Nous Research), self-hosted in Docker; Google AI Studio and OpenRouter free models with automatic fallback |
+| AI agent | Hermes Agent (Nous Research), self-hosted in Docker; free models from Google AI Studio, Nous Portal and OpenRouter with automatic fallback |
 | Notifications | Telegram Bot API |
 | Hosting | Docker Compose on an Oracle Cloud Arm VM, Caddy for automatic HTTPS |
 

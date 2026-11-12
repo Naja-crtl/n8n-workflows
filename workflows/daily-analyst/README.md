@@ -59,7 +59,7 @@ How it is locked down:
 - **No dangerous tools.** The API server may use memory only: `platform_toolsets: api_server: [memory]` in `config.yaml`. No terminal, files, browser or code execution, checked with `GET /v1/toolsets`.
 - **Dashboard behind two locks.** A password login (stored as a hash) and a port bound to the server itself, opened with `ssh -L 9119:127.0.0.1:9119`.
 - **Memory on.** `memory.memory_enabled` and `memory.user_profile_enabled`, so the agent compares days and remembers your preferences.
-- **Free models with automatic fallback.** Main model on Google AI Studio's free tier, with `fallback_providers` to free OpenRouter models. When the main model is busy or rate limited, Hermes switches by itself.
+- **Free models with automatic fallback.** Main model on Google AI Studio's free tier, with `fallback_providers` to a free Nous Portal model (free plan, signed in with `hermes model`) and then free OpenRouter models. When the main model is busy or rate limited, Hermes switches by itself.
 - **Telemetry off.**
 
 ## Credentials needed
