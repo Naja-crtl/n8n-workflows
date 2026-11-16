@@ -53,8 +53,8 @@ const PROMPT = [
 const nodes = [
   node('Setup note', 'n8n-nodes-base.stickyNote', 1, [-80, -420], {
     content:
-      '## Intake Agent\nCall transcript from GoHighLevel → structured intake (Gemini) → document (FastAPI service) → Slack approval → Supabase.\n' +
-      '1. Run `setup.sql` in Supabase, start the service (README)\n2. Credentials: Header Auth on **GHL call note**, Header Auth `x-goog-api-key` on **Extract intake**, Header Auth `Authorization: Bearer <OpenRouter key>` on **Fallback**, Header Auth `Authorization: Bearer …` on **Render document**, Slack API on the Slack nodes, Postgres on the DB nodes\n' +
+      '## Intake Agent\nA new lead (or call notes) → structured intake (Gemini, then OpenRouter free models) → document (FastAPI service) → Slack approval → Supabase.\n' +
+      '1. Run `setup.sql` in Supabase, start the service (README)\n2. Credentials: Header Auth on **GHL call note**, Header Auth `x-goog-api-key` on **Extract intake (Gemini)**, Header Auth `Authorization: Bearer <OpenRouter key>` on **Fallback**, Header Auth `Authorization: Bearer …` on **Render document**, Slack API on the Slack nodes, Postgres on the DB nodes\n' +
       '3. **Build approval message**: set `CHANNEL` to the channel ID\n4. Server `.env`: `SLACK_SIGNING_SECRET`; n8n needs `extra_hosts: host.docker.internal:host-gateway`\n5. Slack app > Interactivity: `https://<n8n host>/webhook/intake-slack`\n6. Workflow settings > Error workflow: **Error Alerts**',
     height: 360,
     width: 520,
@@ -118,7 +118,7 @@ return [{ json: {
   http('Get schema', [660, 0], { url: `${SERVICE}/schema`, options: { timeout: 10000 } }),
   http(
     'Extract intake (Gemini)',
-    [660, 0],
+    [880, 0],
     {
       method: 'POST',
       url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
@@ -136,9 +136,12 @@ return [{ json: {
     // Still failing after the retry (rate limit, outage): the error output goes to the fallback model.
     { retryOnFail: true, maxTries: 3, waitBetweenTries: 5000, onError: 'continueErrorOutput' },
   ),
+  // One request, three free models with exact-JSON support (checked on openrouter.ai/api/v1/models): OpenRouter
+  // moves to the next model when one is busy or down, and require_parameters keeps it to models that honour the
+  // JSON schema. Free models come and go: if one disappears, pick another with "structured_outputs".
   http(
     'Fallback: OpenRouter (free)',
-    [660, 220],
+    [880, 220],
     {
       method: 'POST',
       url: 'https://openrouter.ai/api/v1/chat/completions',
@@ -146,34 +149,34 @@ return [{ json: {
       genericAuthType: 'httpHeaderAuth',
       sendBody: true,
       specifyBody: 'json',
-      // A free model that supports structured outputs (checked on openrouter.ai/api/v1/models). Free models come
-      // and go: if this one disappears, pick another with "structured_outputs" in supported_parameters.
       jsonBody: `={{ JSON.stringify({
-  model: 'nvidia/nemotron-3.5-super-vl:free',
+  models: ['nvidia/nemotron-3.5-super-vl:free', 'inclusionai/ling-3.2-flash:free', 'baidu/ernie-5.5-flash-preview:free'],
+  provider: { require_parameters: true },
   messages: [
     { role: 'system', content: ${JSON.stringify(PROMPT)} },
     { role: 'user', content: $('Read transcript').first().json.transcript }
   ],
-  response_format: { type: 'json_schema', json_schema: { name: 'intake', schema: $('Get schema').first().json } },
+  response_format: { type: 'json_schema', json_schema: { name: 'intake', strict: false, schema: $('Get schema').first().json } },
   temperature: 0.2
 }) }}`,
-      options: { timeout: 90000 },
+      options: { timeout: 120000 },
     },
     { retryOnFail: true, maxTries: 2, waitBetweenTries: 5000 },
   ),
-  code('Parse intake', [880, 0], `
+  code('Parse intake', [1100, 0], `
 // Gemini puts the JSON in candidates, OpenRouter (the fallback) in choices. No text means the model blocked or
 // cut the answer. The service checks the shape again in Render document, so a malformed intake stops there.
 const r = $input.first().json;
 const gemini = Boolean(r.candidates);
-const text = gemini
-  ? (r.candidates[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('')
+const raw = gemini
+  ? (r.candidates[0]?.content?.parts ?? []).filter((p) => !p.thought).map((p) => p.text ?? '').join('')
   : r.choices?.[0]?.message?.content ?? '';
+const text = String(raw).replace(/^\\s*\`\`\`(json)?|\`\`\`\\s*$/g, '').trim();
 if (!text) throw new Error(\`\${gemini ? 'Gemini' : 'Fallback model'} returned no intake: \${r.candidates?.[0]?.finishReason ?? r.choices?.[0]?.finish_reason ?? r.promptFeedback?.blockReason ?? r.error?.message ?? 'empty answer'}\`);
 return [{ json: {
   intake: JSON.parse(text),
   contact_id: $('Read transcript').first().json.contact_id,
-  model: gemini ? 'gemini-flash-latest' : r.model,
+  model: gemini ? 'gemini-flash-latest' : r.model ?? 'unknown',
   tokens: r.usageMetadata?.totalTokenCount ?? r.usage?.total_tokens ?? null,
 } }];
 `),

@@ -5,7 +5,7 @@ Turns a discovery call into the client's architecture and access document. A cal
 ## How it works
 
 1. **Trigger**: GoHighLevel webhook when a call note or transcript is added to a contact.
-2. **Extract**: Gemini gets the transcript and the JSON schema from the service (`GET /schema`) and must answer in that shape. If Gemini still fails after 3 tries (rate limit, "high demand", outage), a free OpenRouter model with structured output takes over. The model that answered is saved with the intake.
+2. **Extract**: Gemini gets the text and the JSON schema from the service (`GET /schema`, with references inlined) and must answer in that shape. If Gemini still fails after 3 tries (rate limit, "high demand", outage), one OpenRouter request takes over with three free models that support exact JSON output (`nvidia/nemotron-3.5-super-vl`, then `inclusionai/ling-3.2-flash`, then `baidu/ernie-5.5-flash-preview`): OpenRouter moves to the next model when one is busy, and `require_parameters` keeps it to models that honour the schema. The model that answered is saved with the intake.
 3. **Render**: n8n posts the JSON to the service (`POST /render`), which checks it again and returns the document in Markdown, with a table of the access to request and a data flow diagram.
 4. **Approve**: a Slack message shows the summary with **Approve** and **Reject** buttons.
 5. **Output**: the draft is saved in Supabase as `pending`. Approve marks it approved and attaches the document to the message's thread as a `.md` file; Reject marks it rejected. Either way the message is replaced with who decided, so the buttons can't be clicked twice. Slack's signature is checked on every click.
@@ -84,7 +84,7 @@ Secrets live in Bitwarden (moving them there is on the to-do list) and in the se
 
 ## Cost per run
 
-A 10-minute call transcript used about 2,500 tokens (input and output). On Gemini's free tier and the free OpenRouter fallback that costs nothing; every intake saves `llm_model` and `llm_tokens`, so the real cost on a paid model is one query away:
+A 10-minute call transcript used about 2,500 tokens (input and output). On Gemini's free tier and the free OpenRouter fallbacks that costs nothing; every intake saves `llm_model` and `llm_tokens`, so the real cost on a paid model is one query away:
 
 ```sql
 select llm_model, count(*), round(avg(llm_tokens)) as avg_tokens from intake.intakes group by 1;

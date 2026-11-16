@@ -3,11 +3,11 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Intake Agent\nCall transcript from GoHighLevel → structured intake (Gemini) → document (FastAPI service) → Slack approval → Supabase.\n1. Run `setup.sql` in Supabase, start the service (README)\n2. Credentials: Header Auth on **GHL call note**, Header Auth `x-goog-api-key` on **Extract intake**, Header Auth `Authorization: Bearer <OpenRouter key>` on **Fallback**, Header Auth `Authorization: Bearer …` on **Render document**, Slack API on the Slack nodes, Postgres on the DB nodes\n3. **Build approval message**: set `CHANNEL` to the channel ID\n4. Server `.env`: `SLACK_SIGNING_SECRET`; n8n needs `extra_hosts: host.docker.internal:host-gateway`\n5. Slack app > Interactivity: `https://<n8n host>/webhook/intake-slack`\n6. Workflow settings > Error workflow: **Error Alerts**",
+        "content": "## Intake Agent\nA new lead (or call notes) → structured intake (Gemini, then OpenRouter free models) → document (FastAPI service) → Slack approval → Supabase.\n1. Run `setup.sql` in Supabase, start the service (README)\n2. Credentials: Header Auth on **GHL call note**, Header Auth `x-goog-api-key` on **Extract intake (Gemini)**, Header Auth `Authorization: Bearer <OpenRouter key>` on **Fallback**, Header Auth `Authorization: Bearer …` on **Render document**, Slack API on the Slack nodes, Postgres on the DB nodes\n3. **Build approval message**: set `CHANNEL` to the channel ID\n4. Server `.env`: `SLACK_SIGNING_SECRET`; n8n needs `extra_hosts: host.docker.internal:host-gateway`\n5. Slack app > Interactivity: `https://<n8n host>/webhook/intake-slack`\n6. Workflow settings > Error workflow: **Error Alerts**",
         "height": 360,
         "width": 520
       },
-      "id": "969975ea-ff00-4704-a379-b62f682f616f",
+      "id": "3577bdc9-3841-497d-b9ef-18732c40d187",
       "name": "Setup note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -24,7 +24,7 @@
         "responseMode": "onReceived",
         "options": {}
       },
-      "id": "8d060f4d-afdd-40b6-8fbf-54320cf2d19e",
+      "id": "8018d7e3-c894-4567-a1af-4bf90220aee6",
       "name": "GHL call note",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -45,7 +45,7 @@
           ]
         }
       },
-      "id": "bbdfd324-c808-4c86-96fe-135339a1c6ea",
+      "id": "715b358f-6907-4508-861e-b75008008720",
       "name": "New lead (from Lead Capture)",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
@@ -62,7 +62,7 @@
           "queryReplacement": "={{ [ $json.lead_id ] }}"
         }
       },
-      "id": "00ea88c9-fd33-42c1-9052-e4a5f2a62a29",
+      "id": "732a3a3d-a958-4193-8a57-5af422c82dc9",
       "name": "Load lead",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
@@ -75,7 +75,7 @@
       "parameters": {
         "jsCode": "const j = $input.first().json;\nconst scrub = (t) => String(t ?? '')\n  .split('\\n').filter((l) => !/^\\s*(name|email|e-mail|phone|mobile|whatsapp)\\s*:/i.test(l)).join('\\n') // website quote answers\n  .replace(/[\\w.+-]+@[\\w-]+\\.[\\w.-]+/g, '[email]')\n  .replace(/\\+?\\d[\\d\\s().-]{6,}\\d/g, '[phone]');\n\nif (j.message !== undefined && j.id) {\n  // A lead from crm.leads\n  const text = [`Source: ${j.source}`, `Company: ${j.company || 'not given'}`, 'Message:', scrub(j.message)].join('\\n');\n  if (scrub(j.message).trim().length < 10) throw new Error(`Lead #${j.id} has no usable message`);\n  return [{ json: {\n    transcript: text.slice(0, 60000),\n    lead_id: j.id,\n    contact_id: '',\n    contact: { name: j.name, email: j.email, phone: j.phone, company: j.company, source: j.source },\n  } }];\n}\n\n// Call notes or a transcript sent to the webhook (GoHighLevel-style body, or test.sh)\nconst b = j.body ?? {};\nconst d = { ...b, ...(b.customData ?? {}) };\nconst transcript = String(d.transcript ?? d.note ?? '').trim();\nif (transcript.length < 200) {\n  throw new Error(`No transcript in the webhook (${transcript.length} characters). Send it as \"transcript\".`);\n}\nreturn [{ json: {\n  transcript: scrub(transcript).slice(0, 60000),\n  lead_id: d.lead_id ? Number(d.lead_id) : null,\n  contact_id: String(d.contact_id ?? d.contactId ?? ''),\n  contact: null,\n} }];\n"
       },
-      "id": "dc3c221a-5542-456e-a8bd-0a0852dd0c86",
+      "id": "0eef043b-b20a-45bb-9b7c-7789a5172f3f",
       "name": "Read transcript",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -91,7 +91,7 @@
           "timeout": 10000
         }
       },
-      "id": "078f8672-542e-47a4-8af8-05757346321d",
+      "id": "17449701-83a7-47b2-819d-c6f2ca756d07",
       "name": "Get schema",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -113,12 +113,12 @@
           "timeout": 60000
         }
       },
-      "id": "d4c91b7f-fe0c-44aa-99bb-f18b0c385496",
+      "id": "21027b18-e1c0-4a9c-9033-ab5f3f01c3c0",
       "name": "Extract intake (Gemini)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        660,
+        880,
         0
       ],
       "retryOnFail": true,
@@ -134,17 +134,17 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  model: 'nvidia/nemotron-3.5-super-vl:free',\n  messages: [\n    { role: 'system', content: \"NB-Systems builds custom business software for small businesses in Lebanon: POS, gas station and distributor systems, websites and apps.\\nYou read a new lead (a quote request or contact form message) or notes from a call with a prospect, and fill in the intake for the build.\\nUse only what the text says. Never invent tools, people, numbers or logins. A short message gives a short intake: put what is missing in open_questions.\\nThe lead's name, email and phone are kept by NB-Systems and removed from the text on purpose: never ask for contact details.\\nclient: the company name; if none is given, describe the business in a few words, for example \\\"Supermarket in Saida\\\".\\nsummary: 2 or 3 full sentences: how they work today, what they want, and the main constraint.\\nsystems: the tools they use today or that the new system must connect to (Excel, an old POS, WhatsApp Business, a website, paper). Features they want (stock, accounts, Arabic, a mobile app) are goals, not systems. owner: who controls it, if said.\\naccess_needed: what to ask the client for, as role plus account, for example 'Admin login to the current POS' or 'Export of the Excel stock sheet'. If not said, write what the build would need and add a question to open_questions.\\nintegrations: every way data moves between systems that was described.\\nrisks: worries or constraints they raised, such as timing, budget, internet, or staff skills.\\nopen_questions: what is still unknown and needed before quoting or building.\" },\n    { role: 'user', content: $('Read transcript').first().json.transcript }\n  ],\n  response_format: { type: 'json_schema', json_schema: { name: 'intake', schema: $('Get schema').first().json } },\n  temperature: 0.2\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  models: ['nvidia/nemotron-3.5-super-vl:free', 'inclusionai/ling-3.2-flash:free', 'baidu/ernie-5.5-flash-preview:free'],\n  provider: { require_parameters: true },\n  messages: [\n    { role: 'system', content: \"NB-Systems builds custom business software for small businesses in Lebanon: POS, gas station and distributor systems, websites and apps.\\nYou read a new lead (a quote request or contact form message) or notes from a call with a prospect, and fill in the intake for the build.\\nUse only what the text says. Never invent tools, people, numbers or logins. A short message gives a short intake: put what is missing in open_questions.\\nThe lead's name, email and phone are kept by NB-Systems and removed from the text on purpose: never ask for contact details.\\nclient: the company name; if none is given, describe the business in a few words, for example \\\"Supermarket in Saida\\\".\\nsummary: 2 or 3 full sentences: how they work today, what they want, and the main constraint.\\nsystems: the tools they use today or that the new system must connect to (Excel, an old POS, WhatsApp Business, a website, paper). Features they want (stock, accounts, Arabic, a mobile app) are goals, not systems. owner: who controls it, if said.\\naccess_needed: what to ask the client for, as role plus account, for example 'Admin login to the current POS' or 'Export of the Excel stock sheet'. If not said, write what the build would need and add a question to open_questions.\\nintegrations: every way data moves between systems that was described.\\nrisks: worries or constraints they raised, such as timing, budget, internet, or staff skills.\\nopen_questions: what is still unknown and needed before quoting or building.\" },\n    { role: 'user', content: $('Read transcript').first().json.transcript }\n  ],\n  response_format: { type: 'json_schema', json_schema: { name: 'intake', strict: false, schema: $('Get schema').first().json } },\n  temperature: 0.2\n}) }}",
         "options": {
-          "timeout": 90000
+          "timeout": 120000
         }
       },
-      "id": "fd6fead0-544b-4bf4-a3c4-41574d82eb59",
+      "id": "c97741e1-e093-4d4b-ab74-3b43848bcd87",
       "name": "Fallback: OpenRouter (free)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        660,
+        880,
         220
       ],
       "retryOnFail": true,
@@ -153,14 +153,14 @@
     },
     {
       "parameters": {
-        "jsCode": "// Gemini puts the JSON in candidates, OpenRouter (the fallback) in choices. No text means the model blocked or\n// cut the answer. The service checks the shape again in Render document, so a malformed intake stops there.\nconst r = $input.first().json;\nconst gemini = Boolean(r.candidates);\nconst text = gemini\n  ? (r.candidates[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('')\n  : r.choices?.[0]?.message?.content ?? '';\nif (!text) throw new Error(`${gemini ? 'Gemini' : 'Fallback model'} returned no intake: ${r.candidates?.[0]?.finishReason ?? r.choices?.[0]?.finish_reason ?? r.promptFeedback?.blockReason ?? r.error?.message ?? 'empty answer'}`);\nreturn [{ json: {\n  intake: JSON.parse(text),\n  contact_id: $('Read transcript').first().json.contact_id,\n  model: gemini ? 'gemini-flash-latest' : r.model,\n  tokens: r.usageMetadata?.totalTokenCount ?? r.usage?.total_tokens ?? null,\n} }];\n"
+        "jsCode": "// Gemini puts the JSON in candidates, OpenRouter (the fallback) in choices. No text means the model blocked or\n// cut the answer. The service checks the shape again in Render document, so a malformed intake stops there.\nconst r = $input.first().json;\nconst gemini = Boolean(r.candidates);\nconst raw = gemini\n  ? (r.candidates[0]?.content?.parts ?? []).filter((p) => !p.thought).map((p) => p.text ?? '').join('')\n  : r.choices?.[0]?.message?.content ?? '';\nconst text = String(raw).replace(/^\\s*```(json)?|```\\s*$/g, '').trim();\nif (!text) throw new Error(`${gemini ? 'Gemini' : 'Fallback model'} returned no intake: ${r.candidates?.[0]?.finishReason ?? r.choices?.[0]?.finish_reason ?? r.promptFeedback?.blockReason ?? r.error?.message ?? 'empty answer'}`);\nreturn [{ json: {\n  intake: JSON.parse(text),\n  contact_id: $('Read transcript').first().json.contact_id,\n  model: gemini ? 'gemini-flash-latest' : r.model ?? 'unknown',\n  tokens: r.usageMetadata?.totalTokenCount ?? r.usage?.total_tokens ?? null,\n} }];\n"
       },
-      "id": "cca43092-8899-43a4-afd9-e77f3b94df14",
+      "id": "a7302824-47e8-41e2-80a8-bb5f8a38af24",
       "name": "Parse intake",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
+        1100,
         0
       ]
     },
@@ -182,7 +182,7 @@
           "timeout": 10000
         }
       },
-      "id": "0293fedf-a92f-4e89-80a3-5373b7ce4808",
+      "id": "2269c3e8-32c3-4add-a5c3-17d06512f6fd",
       "name": "Render document",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -199,7 +199,7 @@
           "queryReplacement": "={{ [ $('Parse intake').first().json.intake.client, $('Parse intake').first().json.contact_id, $('Read transcript').first().json.lead_id, JSON.stringify($('Parse intake').first().json.intake), $json.data, $('Parse intake').first().json.model, $('Parse intake').first().json.tokens ] }}"
         }
       },
-      "id": "cbf03862-f261-43b6-b235-34067ec8e64c",
+      "id": "216877f8-108a-43b0-a03f-141bcb703689",
       "name": "Save draft",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
@@ -212,7 +212,7 @@
       "parameters": {
         "jsCode": "const CHANNEL = 'YOUR_CHANNEL_ID'; // Slack: channel details > About > Channel ID\nconst i = $('Parse intake').first().json.intake;\nconst id = String($json.id);\nconst cut = (s, n = 2900) => (s.length > n ? s.slice(0, n - 1) + '…' : s); // Slack's limit per text block is 3000\n// Slack mrkdwn reads <...> as links and mentions, so LLM text like \"<client account>/admin\" would vanish.\nconst esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst c = $('Read transcript').first().json.contact; // from crm.leads, never from the AI\nconst lead = $('Read transcript').first().json.lead_id;\n\nconst blocks = [\n  { type: 'header', text: { type: 'plain_text', text: cut(`Intake: ${i.client}`, 150) } },\n  { type: 'section', text: { type: 'mrkdwn', text: cut(esc(i.summary)) } },\n  { type: 'section', text: { type: 'mrkdwn', text: cut('*Access to request*\\n' + i.systems.map((s) => `• *${esc(s.name)}*: ${esc(s.access_needed.join(', ') || 'not said yet')}`).join('\\n')) } },\n];\nif (c) {\n  const line = [c.name, c.email, c.phone].filter(Boolean).map(esc).join(' · ');\n  blocks.splice(1, 0, { type: 'section', text: { type: 'mrkdwn', text: cut(`*Lead #${lead}* (${esc(c.source)}): ${line || 'no contact details'}`) } });\n}\nif (i.open_questions?.length) {\n  blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: cut('Open questions: ' + esc(i.open_questions.join(' · '))) }] });\n}\nblocks.push({\n  type: 'actions',\n  elements: [\n    { type: 'button', action_id: 'approve', style: 'primary', text: { type: 'plain_text', text: 'Approve' }, value: id },\n    { type: 'button', action_id: 'reject', style: 'danger', text: { type: 'plain_text', text: 'Reject' }, value: id },\n  ],\n});\nreturn [{ json: { channel: CHANNEL, text: `Intake for ${i.client} is waiting for approval`, blocks } }];\n"
       },
-      "id": "554e606d-1c80-419b-9228-5136e1eb8bf1",
+      "id": "24fed9ce-34d8-49fb-adc5-df1b39a80b75",
       "name": "Build approval message",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -234,7 +234,7 @@
           "timeout": 15000
         }
       },
-      "id": "ba463475-67b1-4a77-8c6b-00b5d256e7dd",
+      "id": "290c9b3c-dcea-40db-8d17-f7e8f174cf6d",
       "name": "Ask for approval (Slack)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -247,7 +247,7 @@
       "parameters": {
         "jsCode": "if (!$json.ok) throw new Error(`Slack: ${$json.error}`);\nreturn $input.all();\n"
       },
-      "id": "c32bbe9f-89b3-4636-8df9-143b446af8b2",
+      "id": "889ecb3e-f3e0-4da9-9955-7c8050b09619",
       "name": "Check Slack",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -265,7 +265,7 @@
           "rawBody": true
         }
       },
-      "id": "56294199-2726-4217-87fa-cd6ea9f28d99",
+      "id": "c96854e5-d6e2-4f74-a059-a9ecd0a3f722",
       "name": "Slack button",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -278,7 +278,7 @@
       "parameters": {
         "jsCode": "// Slack signs each request: HMAC-SHA256 of \"v0:<timestamp>:<raw body>\" with the app's signing secret.\n// Anyone can call this URL, so nothing runs until the signature and timestamp check out.\nconst crypto = require('crypto');\nconst headers = $input.first().json.headers;\nconst raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\nconst ts = Number(headers['x-slack-request-timestamp']);\nif (!ts || Math.abs(Date.now() / 1000 - ts) > 300) throw new Error('Slack request is too old or has no timestamp');\nconst expected = 'v0=' + crypto.createHmac('sha256', $env.SLACK_SIGNING_SECRET).update(`v0:${ts}:${raw}`).digest('hex');\nconst got = String(headers['x-slack-signature'] ?? '');\nif (got.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(expected))) {\n  throw new Error('Slack signature does not match');\n}\n\n// Slack sends one form field, payload=<JSON>. Parsed by hand: n8n's Code sandbox has no URLSearchParams.\nconst field = raw.split('&').find((part) => part.startsWith('payload='));\nif (!field) throw new Error('Slack request has no payload');\nconst p = JSON.parse(decodeURIComponent(field.slice('payload='.length).replace(/\\+/g, ' ')));\nconst action = p.actions?.[0]?.action_id;\nif (action !== 'approve' && action !== 'reject') throw new Error(`Unknown Slack action: ${action}`);\nreturn [{ json: {\n  status: action === 'approve' ? 'approved' : 'rejected',\n  id: Number(p.actions[0].value),\n  user: p.user?.username ?? p.user?.name ?? p.user?.id,\n  channel: p.container?.channel_id ?? p.channel?.id,\n  ts: p.container?.message_ts,\n  response_url: p.response_url,\n} }];\n"
       },
-      "id": "39cb3072-2cb3-4932-be2e-f8e9ed0d2441",
+      "id": "2fdcaa31-8b80-4096-af22-b1ffe6a1fbcf",
       "name": "Verify Slack request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -295,7 +295,7 @@
           "queryReplacement": "={{ [ $json.status, $json.user, $json.id ] }}"
         }
       },
-      "id": "1c1eba84-6749-4a05-ae67-f55fea467280",
+      "id": "75c6fa15-7335-43f8-b536-05c9f68ae950",
       "name": "Record decision",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
@@ -308,7 +308,7 @@
       "parameters": {
         "jsCode": "return $input.all().filter((item) => item.json.id);\n"
       },
-      "id": "54bfd0c2-86ef-4118-8c5c-3f6aeb292df8",
+      "id": "37761682-6562-4084-8523-4e200eef32a5",
       "name": "Still pending?",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -328,7 +328,7 @@
           },
           "conditions": [
             {
-              "id": "768a04e2-e530-4655-8283-7f283b7293b4",
+              "id": "1bb99bca-8c63-4906-b196-ad107c281555",
               "leftValue": "={{ $json.status }}",
               "rightValue": "approved",
               "operator": {
@@ -341,7 +341,7 @@
         },
         "options": {}
       },
-      "id": "2bb58fa4-d390-46a0-858c-b35a0012fcae",
+      "id": "8f36c03a-6ca3-43f4-a4a6-75a9d05d4b5f",
       "name": "Approved?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -354,7 +354,7 @@
       "parameters": {
         "jsCode": "const r = $input.first().json;\nconst slug = r.client.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'client';\n// The lead's contact details go into the file here, from crm.leads (the AI never saw them).\nconst c = r.contact;\nconst contact = c\n  ? ['## Contact', '', `- Lead #${r.lead_id} (${c.source})`, ...[['Name', c.name], ['Email', c.email], ['Phone', c.phone]].filter(([, v]) => v).map(([k, v]) => `- ${k}: ${v}`), '', ''].join('\\n')\n  : '';\nconst [title, ...rest] = r.document.split('\\n');\nconst document = [title, '', contact + rest.join('\\n').replace(/^\\n+/, '')].join('\\n');\nreturn [{ json: {\n  filename: `${slug}-intake.md`,\n  title: `${r.client}: architecture and access`,\n  length: Buffer.byteLength(document, 'utf8'),\n  document,\n} }];\n"
       },
-      "id": "b8a5eb77-4c94-42d6-9947-595977525a59",
+      "id": "27db6fa9-cdaa-4582-9156-4bd7a737b16e",
       "name": "Prepare file",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -387,7 +387,7 @@
           "timeout": 15000
         }
       },
-      "id": "4ec68b14-8e06-4d2c-a8d2-ebb6962123c9",
+      "id": "3d3a66c2-6863-4cfb-8d2b-509aa88207f5",
       "name": "Get upload URL (Slack)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -400,7 +400,7 @@
       "parameters": {
         "jsCode": "if (!$json.ok) throw new Error(`Slack: ${$json.error}`);\nreturn $input.all();\n"
       },
-      "id": "c8230215-dd61-4d0f-9820-72edaf98adc4",
+      "id": "1aeb927d-6f2f-46d2-8b3a-04d97c089ff2",
       "name": "Check upload URL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -426,7 +426,7 @@
           "timeout": 30000
         }
       },
-      "id": "a8887807-60de-4653-869d-b001d8fc91c3",
+      "id": "33fe8e72-b84b-45a6-8500-15dde1cdbf46",
       "name": "Upload file",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -463,7 +463,7 @@
           "timeout": 15000
         }
       },
-      "id": "08935154-d591-45e3-92c1-e15e2b29756a",
+      "id": "5b2a4320-bffb-4c5f-adb0-3f18bc436203",
       "name": "Share in thread (Slack)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -476,7 +476,7 @@
       "parameters": {
         "jsCode": "if (!$json.ok) throw new Error(`Slack: ${$json.error}`);\nreturn $input.all();\n"
       },
-      "id": "3e7f9d34-d6ff-44a2-85a3-665eb54da3c2",
+      "id": "270950bb-5092-4faa-bfd9-e2138d983298",
       "name": "Check share",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -496,7 +496,7 @@
           "timeout": 15000
         }
       },
-      "id": "ce869183-a2f7-416d-a6ae-e0b852435583",
+      "id": "01da5a9b-335c-48f4-817b-097632b6b12f",
       "name": "Update message",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -516,7 +516,7 @@
           ]
         }
       },
-      "id": "c95913ef-9d28-472a-8f87-717be8b2f612",
+      "id": "a387fd06-5919-4f48-b4d9-ba8a67a9d724",
       "name": "Daily at 03:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
@@ -531,7 +531,7 @@
         "query": "DELETE FROM intake.intakes\nWHERE status = 'rejected' AND decided_at < now() - interval '30 days';",
         "options": {}
       },
-      "id": "9e9a0419-6e9f-4d95-b315-e14842a93747",
+      "id": "0038f91c-bb17-4076-b168-7baf5069ad21",
       "name": "Delete old rejected",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,

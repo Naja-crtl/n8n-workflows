@@ -53,7 +53,23 @@ def health() -> dict:
 
 @app.get("/schema")
 def schema() -> dict:
-    return Intake.model_json_schema()
+    return inline_refs(Intake.model_json_schema())
+
+
+def inline_refs(schema: dict) -> dict:
+    """The schema with every $ref replaced by its definition: some models' JSON modes don't follow $ref."""
+    defs = schema.pop("$defs", {})
+
+    def walk(node):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                return walk(defs[node["$ref"].split("/")[-1]])
+            return {k: walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(v) for v in node]
+        return node
+
+    return walk(schema)
 
 
 @app.post("/render", response_class=PlainTextResponse, dependencies=[Depends(require_token)])

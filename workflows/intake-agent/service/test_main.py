@@ -22,7 +22,9 @@ intake = {
 }
 
 assert c.get("/health").json() == {"ok": True}
-assert "systems" in c.get("/schema").json()["properties"]
+sch = c.get("/schema").json()
+assert "systems" in sch["properties"] and "$defs" not in sch and "$ref" not in str(sch), "schema inlined for JSON modes"
+assert "access_needed" in sch["properties"]["systems"]["items"]["properties"]
 assert c.post("/render", json=intake).status_code == 401, "no token"
 assert c.post("/render", json=intake, headers={"Authorization": "Bearer wrong"}).status_code == 401
 assert c.post("/render", json={**intake, "systems": []}, headers=auth).status_code == 422, "LLM output without systems"
