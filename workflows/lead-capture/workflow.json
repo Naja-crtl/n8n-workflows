@@ -305,6 +305,47 @@
         880,
         640
       ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ Number($json.id) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "5785212c-9541-41b3-b12a-41da8193a320",
+      "name": "Start intake",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        400
+      ],
+      "notes": "Starts the Intake Agent for this lead (no waiting): a draft intake with the contact details lands in Slack."
     }
   ],
   "connections": {
@@ -346,6 +387,11 @@
         [
           {
             "node": "Telegram alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Start intake",
             "type": "main",
             "index": 0
           }
@@ -430,6 +476,11 @@
         [
           {
             "node": "Telegram website lead",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Start intake",
             "type": "main",
             "index": 0
           }

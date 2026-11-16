@@ -1,0 +1,22 @@
+# systemd unit: /etc/systemd/system/intake-service.service
+# Listens on the Docker bridge (172.17.0.1), so the n8n and Caddy containers reach it as
+# host.docker.internal:8100 while it stays off the public interface.
+[Unit]
+Description=Intake service (FastAPI)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+User=intake
+WorkingDirectory=/opt/intake-service
+EnvironmentFile=/etc/intake-service.env
+ExecStart=/opt/intake-service/.venv/bin/uvicorn main:app --host 172.17.0.1 --port 8100 --no-server-header
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

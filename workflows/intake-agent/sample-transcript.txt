@@ -1,0 +1,18 @@
+Discovery call, BrightLine Roofing (fictional, for testing)
+
+Agency: Thanks for jumping on. Can you tell me how leads come in today?
+Dana (owner): Mostly Facebook lead ads. We run them ourselves in Meta Ads Manager. The leads land in a Google Sheet through Zapier, and my office manager, Luis, calls them back when he sees them. Sometimes that's the next day.
+Agency: Do you use a CRM?
+Dana: We started a GoHighLevel account last month but nobody really set it up. There's a pipeline with default stages and that's it.
+Agency: What would a win look like for you in the next 90 days?
+Dana: Every lead gets a text within a minute, and Luis gets a notification so he can call while they're still interested. And I want to see which ads actually bring booked inspections, not just form fills.
+Agency: Who controls the Facebook page and the ad account?
+Dana: I'm the admin on both. Luis has access to the Google Sheet and GoHighLevel.
+Agency: Website?
+Dana: WordPress, built by a freelancer two years ago. There's a contact form, I don't know where it sends things. I think it emails me.
+Agency: Any tracking on the site, like the Meta pixel or Google Analytics?
+Dana: I'm not sure. The freelancer might have added something.
+Agency: Anything that worries you about changing the setup?
+Dana: We're in peak season, so I can't have leads going missing while you switch things over. And Luis isn't very technical, so it has to be simple for him.
+Agency: Understood. We'll need admin access to GoHighLevel, partner access to the ad account and page, and a login for WordPress.
+Dana: I can do GoHighLevel and Facebook today. For WordPress I'll have to find the password, the freelancer might still have it.

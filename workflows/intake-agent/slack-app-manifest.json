@@ -1,0 +1,31 @@
+{
+  "display_information": {
+    "name": "Intake Agent",
+    "description": "Posts intake documents from client calls for approval",
+    "background_color": "#1f2937"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Intake Agent",
+      "always_online": true
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "files:write"
+      ]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "is_hosted": false,
+    "token_rotation_enabled": false,
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://YOUR_N8N_HOST/webhook/intake-slack"
+    }
+  }
+}
