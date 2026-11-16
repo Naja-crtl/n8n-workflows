@@ -1,20 +1,30 @@
 {
   "display_information": {
     "name": "Intake Agent",
-    "description": "Posts intake documents from client calls for approval",
+    "description": "Intake approvals and /ask questions for NB-Systems",
     "background_color": "#1f2937"
   },
   "features": {
     "bot_user": {
       "display_name": "Intake Agent",
       "always_online": true
-    }
+    },
+    "slash_commands": [
+      {
+        "command": "/ask",
+        "url": "https://YOUR_N8N_HOST/webhook/leads-ask",
+        "description": "Ask about leads, posts, demos, workflows and intakes",
+        "usage_hint": "which demo was down this week?",
+        "should_escape": false
+      }
+    ]
   },
   "oauth_config": {
     "scopes": {
       "bot": [
         "chat:write",
-        "files:write"
+        "files:write",
+        "commands"
       ]
     }
   },
